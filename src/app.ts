@@ -4,6 +4,7 @@ import { authRoutes } from './routes/auth';
 import { profileRoutes } from './routes/profile';
 import { communityRoutes } from './routes/communities';
 import { postRoutes } from './routes/posts';
+import { productRoutes } from './routes/products';
 import { authGeneralLimiter } from './middleware/rateLimit';
 import { setBlockedFlag, wrapResponse } from './middleware/responseWrapper';
 
@@ -30,5 +31,6 @@ app.use('/auth', authGeneralLimiter, authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/communities', communityRoutes);
 app.use('/posts', postRoutes);
+app.use('/products', productRoutes);
 
 export default app;
