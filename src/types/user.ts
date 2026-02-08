@@ -23,8 +23,10 @@ export interface OnboardingData {
   anythingElseWeShouldKnow?: string;
 }
 
-/** Request body for PUT /auth/profile (questionnaire). All questionnaire fields required; email/phone optional. */
+/** Request body for PUT /profile (questionnaire). All questionnaire fields required; email/phone optional. */
 export interface ProfileQuestionnaireBody {
+  username: string;
+  nickname: string;
   age: number;
   gender: Gender;
   relationshipStatus: RelationshipStatus;

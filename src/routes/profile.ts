@@ -25,6 +25,10 @@ const MAIN_INTERESTS: MainInterest[] = [
 ];
 const SEXUAL_EXPERIENCES: SexualExperience[] = ['virgin', 'some-experience', 'experienced', 'prefer-not-to-say'];
 
+const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
+const USERNAME_MIN = 3;
+const USERNAME_MAX = 30;
+
 function isValidEmail(email: unknown): boolean {
   return typeof email === 'string' && EMAIL_REGEX.test(email.trim());
 }
@@ -37,6 +41,12 @@ function isValidPhone(phone: unknown): boolean {
 
 function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, '').trim();
+}
+
+function isValidUsername(username: unknown): boolean {
+  if (typeof username !== 'string') return false;
+  const s = username.trim().toLowerCase();
+  return s.length >= USERNAME_MIN && s.length <= USERNAME_MAX && USERNAME_REGEX.test(s);
 }
 
 /**
@@ -55,8 +65,11 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       id: (user as { _id?: unknown })._id,
       email: (user as { email?: string }).email,
       phone: (user as { phone?: string }).phone,
+      username: (user as { username?: string }).username,
+      nickname: (user as { nickname?: string }).nickname,
       displayName: (user as { displayName?: string }).displayName,
       avatarUrl: (user as { avatarUrl?: string }).avatarUrl,
+      age: (user as { age?: number }).age ?? (onboarding ? (onboarding as { age?: number }).age : undefined),
       hasOnboarded: (user as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (user as { preferences?: unknown }).preferences,
     },
@@ -80,8 +93,99 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 });
 
 /**
+ * PATCH /profile — Protected. Update only profile page fields: username, nickname, age, avatarUrl.
+ * All fields optional; only provided fields are updated. Use for the "Edit profile" page.
+ */
+router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const userId = (user as { _id?: unknown })._id;
+  const body = (req.body ?? {}) as { username?: string; nickname?: string; age?: number; avatarUrl?: string };
+  const updates: Record<string, unknown> = {};
+
+  if (body.username !== undefined) {
+    if (!body.username || !isValidUsername(body.username)) {
+      res.status(400).json({
+        error: 'username must be 3–30 characters, only letters, numbers, and underscore',
+      });
+      return;
+    }
+    const usernameLower = (body.username as string).trim().toLowerCase();
+    const existingByUsername = await User.findOne({ username: usernameLower, _id: { $ne: userId } });
+    if (existingByUsername) {
+      res.status(400).json({ error: 'This username is already taken' });
+      return;
+    }
+    updates.username = usernameLower;
+  }
+
+  if (body.nickname !== undefined) {
+    if (typeof body.nickname !== 'string' || body.nickname.trim().length === 0) {
+      res.status(400).json({ error: 'nickname must be a non-empty string' });
+      return;
+    }
+    const nickname = body.nickname.trim();
+    if (nickname.length > 50) {
+      res.status(400).json({ error: 'nickname must be at most 50 characters' });
+      return;
+    }
+    updates.nickname = nickname;
+  }
+
+  if (body.age !== undefined) {
+    const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age), 10);
+    if (!Number.isFinite(age) || age < MIN_AGE) {
+      res.status(400).json({ error: `age must be at least ${MIN_AGE}` });
+      return;
+    }
+    updates.age = age;
+  }
+
+  if (body.avatarUrl !== undefined) {
+    updates.avatarUrl = typeof body.avatarUrl === 'string' ? body.avatarUrl.trim() || null : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: 'Provide at least one field to update: username, nickname, age, avatarUrl' });
+    return;
+  }
+
+  const updatedUser = await User.findByIdAndUpdate(userId, { $set: updates }, { new: true }).lean();
+  if (!updatedUser) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+
+  if (updates.age !== undefined) {
+    await Onboarding.findOneAndUpdate(
+      { userId },
+      { $set: { age: updates.age } },
+      { upsert: false }
+    );
+  }
+
+  res.status(200).json({
+    user: {
+      id: (updatedUser as { _id?: unknown })._id,
+      email: (updatedUser as { email?: string }).email,
+      phone: (updatedUser as { phone?: string }).phone,
+      username: (updatedUser as { username?: string }).username,
+      nickname: (updatedUser as { nickname?: string }).nickname,
+      displayName: (updatedUser as { displayName?: string }).displayName,
+      avatarUrl: (updatedUser as { avatarUrl?: string }).avatarUrl,
+      age: (updatedUser as { age?: number }).age,
+      hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,
+      preferences: (updatedUser as { preferences?: unknown }).preferences,
+    },
+  });
+});
+
+/**
  * PUT /profile — Protected. Create/update onboarding record and set user.hasOnboarded.
- * Optional: add email or phone to user if missing.
+ * Full questionnaire; optional: add email or phone to user if missing.
  */
 router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = req.user;
@@ -90,6 +194,29 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
   const body = (req.body ?? {}) as Partial<ProfileQuestionnaireBody>;
+
+  if (!body.username || !isValidUsername(body.username)) {
+    res.status(400).json({
+      error: `username is required: 3–30 characters, only letters, numbers, and underscore`,
+    });
+    return;
+  }
+  const usernameLower = (body.username as string).trim().toLowerCase();
+  const existingByUsername = await User.findOne({ username: usernameLower, _id: { $ne: (user as { _id?: unknown })._id } });
+  if (existingByUsername) {
+    res.status(400).json({ error: 'This username is already taken' });
+    return;
+  }
+
+  if (!body.nickname || typeof body.nickname !== 'string' || body.nickname.trim().length === 0) {
+    res.status(400).json({ error: 'nickname is required and must be a non-empty string' });
+    return;
+  }
+  const nickname = (body.nickname as string).trim();
+  if (nickname.length > 50) {
+    res.status(400).json({ error: 'nickname must be at most 50 characters' });
+    return;
+  }
 
   const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age), 10);
   if (!Number.isFinite(age) || age < MIN_AGE) {
@@ -164,7 +291,12 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   await Onboarding.findOneAndUpdate({ userId }, onboardingPayload, { upsert: true, new: true });
 
-  const userSetUpdate: Record<string, unknown> = { hasOnboarded: true };
+  const userSetUpdate: Record<string, unknown> = {
+    hasOnboarded: true,
+    username: usernameLower,
+    nickname,
+    age,
+  };
   const pushProviders: { provider: string; providerId: string; identifier: string; linkedAt: Date }[] = [];
 
   if (body.email !== undefined && body.email !== null && String(body.email).trim() !== '') {
@@ -219,8 +351,11 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
       id: (updatedUser as { _id?: unknown })._id,
       email: (updatedUser as { email?: string }).email,
       phone: (updatedUser as { phone?: string }).phone,
+      username: (updatedUser as { username?: string }).username,
+      nickname: (updatedUser as { nickname?: string }).nickname,
       displayName: (updatedUser as { displayName?: string }).displayName,
       avatarUrl: (updatedUser as { avatarUrl?: string }).avatarUrl,
+      age: (updatedUser as { age?: number }).age,
       hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (updatedUser as { preferences?: unknown }).preferences,
     },

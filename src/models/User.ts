@@ -15,8 +15,11 @@ const UserSchema = new Schema(
   {
     email: { type: String, sparse: true, unique: true, lowercase: true, trim: true },
     phone: { type: String, sparse: true, unique: true, trim: true },
+    username: { type: String, sparse: true, unique: true, lowercase: true, trim: true },
+    nickname: { type: String, trim: true },
     displayName: { type: String, default: 'User', trim: true },
     avatarUrl: { type: String },
+    age: { type: Number },
     authProviders: { type: [AuthProviderSchema], default: [] },
     hasOnboarded: { type: Boolean, default: false },
     preferences: {

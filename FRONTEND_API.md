@@ -104,6 +104,8 @@ Phone: at least 10 digits; non-digits are stripped. E.164 or digits-only both wo
     "id": "507f1f77bcf86cd799439011",
     "email": "user@example.com",
     "phone": null,
+    "username": "jane_doe",
+    "nickname": "Jane",
     "displayName": "user",
     "avatarUrl": null,
     "hasOnboarded": false,
@@ -137,6 +139,8 @@ Phone: at least 10 digits; non-digits are stripped. E.164 or digits-only both wo
     "id": "507f1f77bcf86cd799439011",
     "email": "user@example.com",
     "phone": null,
+    "username": "jane_doe",
+    "nickname": "Jane",
     "displayName": "user",
     "avatarUrl": null,
     "hasOnboarded": true,
@@ -172,7 +176,7 @@ Only when backend is **not** in production. Use to get the current OTP for testi
 
 ### 2.6 Profile — Get (Protected)
 
-Returns current user and their onboarding answers (if any). Use after login to prefill onboarding or profile screens.
+Returns current user and their onboarding answers (if any). Use for the profile page and to prefill onboarding. **Profile page** should display and allow editing only: `username`, `nickname`, `age`, `avatarUrl` (display picture; for future use).
 
 | Method | Path        | Auth        |
 |--------|-------------|-------------|
@@ -185,8 +189,11 @@ Returns current user and their onboarding answers (if any). Use after login to p
     "id": "507f1f77bcf86cd799439011",
     "email": "user@example.com",
     "phone": null,
+    "username": "jane_doe",
+    "nickname": "Jane",
     "displayName": "user",
     "avatarUrl": null,
+    "age": 25,
     "hasOnboarded": true,
     "preferences": { "anonymousInCommunity": false, "notifications": true }
   },
@@ -212,9 +219,36 @@ Returns current user and their onboarding answers (if any). Use after login to p
 
 ---
 
-### 2.7 Profile — Update (Onboarding Questionnaire) (Protected)
+### 2.7 Profile — Update (Edit profile page) (Protected)
 
-Submit or update the onboarding questionnaire. All questionnaire fields are **required**. Optionally add the **other** contact: if user signed up with **email**, they can send **phone** here (and vice versa). Sets `hasOnboarded: true` after success.
+Update only the fields shown on the **profile edit page**: username, nickname, age, and display picture (`avatarUrl`). All fields are optional; send only the ones you want to change.
+
+| Method | Path        | Auth        |
+|--------|-------------|-------------|
+| PATCH  | `/profile`  | Bearer token|
+
+**Request body (all optional):**
+
+| Field       | Type   | Notes |
+|-------------|--------|--------|
+| `username`  | string | 3–30 chars, only `a-z`, `0-9`, `_`; unique; stored lowercase |
+| `nickname`  | string | Non-empty, max 50 chars |
+| `age`       | number | Must be ≥ 18 |
+| `avatarUrl` | string | URL for display picture (for future use); empty string clears it |
+
+**Example:** `PATCH /profile` with `{ "nickname": "Janey", "age": 26 }` updates only nickname and age.
+
+**Success (200):** `{ "user": { id, email, phone, username, nickname, displayName, avatarUrl, age, hasOnboarded, preferences } }`.
+
+**Errors:**
+- **400** — Validation (e.g. username taken, age &lt; 18, empty nickname) or no fields provided.
+- **401** / **403** — Unauthorized or blocked.
+
+---
+
+### 2.8 Profile — Full onboarding questionnaire (Protected)
+
+Submit or update the **full** onboarding questionnaire (first-time or replace). All questionnaire fields are **required**. Optionally add the **other** contact: if user signed up with **email**, they can send **phone** here (and vice versa). Sets `hasOnboarded: true` after success.
 
 | Method | Path       | Auth        |
 |--------|------------|-------------|
@@ -224,11 +258,13 @@ Submit or update the onboarding questionnaire. All questionnaire fields are **re
 
 | Field                     | Type     | Required | Notes |
 |---------------------------|----------|----------|--------|
+| `username`                | string   | Yes      | 3–30 chars, only `a-z`, `0-9`, `_` (unique; stored lowercase) |
+| `nickname`                | string   | Yes      | Non-empty, max 50 chars (display name in community) |
 | `age`                     | number   | Yes      | Must be ≥ 18 |
 | `gender`                  | string   | Yes      | `male` \| `female` \| `non-binary` \| `prefer-not-to-say` |
 | `relationshipStatus`      | string   | Yes      | `single` \| `dating` \| `married` \| `complicated` |
 | `mainInterests`           | string[] | Yes      | At least one: `relationship-advice`, `intimacy-techniques`, `product-knowledge`, `general-education` |
-| `sexualExperience`         | string   | Yes      | `virgin` \| `some-experience` \| `experienced` \| `prefer-not-to-say` |
+| `sexualExperience`        | string   | Yes      | `virgin` \| `some-experience` \| `experienced` \| `prefer-not-to-say` |
 | `whyImprove`              | string   | Yes      | Non-empty text |
 | `primaryConcern`          | string   | Yes      | Non-empty text |
 | `intimacyGoals`           | string   | Yes      | Non-empty text |
@@ -242,6 +278,8 @@ Submit or update the onboarding questionnaire. All questionnaire fields are **re
 **Example:**
 ```json
 {
+  "username": "jane_doe",
+  "nickname": "Jane",
   "age": 25,
   "gender": "female",
   "relationshipStatus": "dating",
@@ -327,23 +365,189 @@ Use `error` for toasts or inline validation. Use HTTP status for flow (e.g. 401 
 
 ---
 
-## 8. Quick Reference — All Endpoints
+## 8. Community & Posts (Reddit-style)
 
-| Method | Path                     | Auth   | Purpose |
-|--------|--------------------------|--------|---------|
-| GET    | `/health`                | No     | Health check |
-| POST   | `/auth/signup`           | No     | Request OTP (signup/signin) |
-| POST   | `/auth/signin`           | No     | Request OTP (signup/signin) |
-| POST   | `/auth/otp/send`         | No     | Request OTP (signup/signin) |
-| POST   | `/auth/otp/verify`       | No     | Verify OTP, get token + user |
-| GET    | `/auth/me`               | Bearer | Current user |
-| GET    | `/auth/otp/dev/:identifier` | No  | Dev: get OTP for testing |
-| GET    | `/profile`               | Bearer | User + onboarding data |
-| PUT    | `/profile`               | Bearer | Submit/update onboarding questionnaire |
+There is one default community (`slug: "general"`). Users can post, comment, like, and share. Schema supports multiple communities later.
+
+### 8.1 List communities
+
+| Method | Path            | Auth |
+|--------|-----------------|------|
+| GET    | `/communities`  | No   |
+
+**Response (200):**
+```json
+{
+  "communities": [
+    { "id": "...", "name": "General", "slug": "general", "description": "..." }
+  ]
+}
+```
+
+### 8.2 Get one community
+
+| Method | Path                  | Auth |
+|--------|-----------------------|------|
+| GET    | `/communities/:idOrSlug` | No   |
+
+`:idOrSlug` = community ID or slug (e.g. `general`).
+
+### 8.3 List posts (with filters & pagination)
+
+| Method | Path                            | Auth |
+|--------|----------------------------------|------|
+| GET    | `/communities/:idOrSlug/posts`   | No   |
+
+**Query:**
+
+| Param   | Type   | Default    | Description |
+|---------|--------|------------|-------------|
+| `filter`| string | `trending` | One of: `trending`, `hot`, `newest`, `most_liked`, `most_commented` |
+| `page`  | number | 1          | Page number |
+| `limit` | number | 20         | Items per page (max 50) |
+
+**Scoring formulas:**
+
+- **newest** — Sort by `createdAt` descending.
+- **most_liked** — Sort by `likeCount` descending.
+- **most_commented** — Sort by `commentCount` descending.
+- **trending** — Score = `likeCount + commentCount×2 + shareCount`; sort by score descending. **Default when no filter.**
+- **hot** — Score = `(likeCount + commentCount×2) / (1 + hoursSinceCreation)^1.5`; sort by score descending (newer posts rank higher).
+
+**Response (200):**
+```json
+{
+  "posts": [
+    {
+      "id": "...",
+      "communityId": "...",
+      "authorId": "...",
+      "author": {
+        "id": "...",
+        "username": "jane_doe",
+        "nickname": "Jane",
+        "avatarUrl": null
+      },
+      "title": "...",
+      "content": "...",
+      "likeCount": 0,
+      "commentCount": 0,
+      "shareCount": 0,
+      "createdAt": "...",
+      "updatedAt": "..."
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 42, "totalPages": 3 },
+  "filter": "trending"
+}
+```
+If user has `preferences.anonymousInCommunity: true`, `author` shows `nickname: "Anonymous"` and `username: null`, `avatarUrl: null`.
+
+### 8.4 Create post
+
+| Method | Path                            | Auth   |
+|--------|----------------------------------|--------|
+| POST   | `/communities/:idOrSlug/posts`  | Bearer |
+
+**Body:** `{ "title": "string", "content": "string" }` (both required, non-empty).
+
+**Response (201):** `{ "post": { ... } }` (same shape as list).
+
+### 8.5 Get single post
+
+| Method | Path        | Auth |
+|--------|-------------|------|
+| GET    | `/posts/:id`| No   |
+
+**Response (200):** `{ "post": { ... } }`.
+
+### 8.6 Like / unlike post
+
+| Method | Path            | Auth   |
+|--------|-----------------|--------|
+| POST   | `/posts/:id/like` | Bearer |
+
+Toggles like. One like per user; calling again removes the like.
+
+**Response (200):**
+```json
+{ "liked": true, "likeCount": 5 }
+```
+
+### 8.7 List comments
+
+| Method | Path                | Auth |
+|--------|---------------------|------|
+| GET    | `/posts/:id/comments` | No   |
+
+**Query:** `page`, `limit` (same as posts; default limit 20).
+
+**Response (200):**
+```json
+{
+  "comments": [
+    {
+      "id": "...",
+      "postId": "...",
+      "authorId": "...",
+      "author": { "id": "...", "username": "...", "nickname": "...", "avatarUrl": null },
+      "parentId": null,
+      "content": "...",
+      "likeCount": 0,
+      "createdAt": "..."
+    }
+  ],
+  "pagination": { "page": 1, "limit": 20, "total": 10, "totalPages": 1 }
+}
+```
+
+### 8.8 Create comment
+
+| Method | Path                | Auth   |
+|--------|---------------------|--------|
+| POST   | `/posts/:id/comments` | Bearer |
+
+**Body:** `{ "content": "string" }` (required, non-empty).
+
+**Response (201):** `{ "comment": { ... } }`.
+
+### 8.9 Share (increment share count)
+
+| Method | Path             | Auth   |
+|--------|------------------|--------|
+| POST   | `/posts/:id/share` | Bearer |
+
+**Response (200):** `{ "shareCount": 3 }`.
 
 ---
 
-## 9. Enums (for dropdowns / validation)
+## 9. Quick Reference — All Endpoints
+
+| Method | Path                          | Auth   | Purpose |
+|--------|-------------------------------|--------|---------|
+| GET    | `/health`                     | No     | Health check |
+| POST   | `/auth/signup`                | No     | Request OTP |
+| POST   | `/auth/signin`                | No     | Request OTP |
+| POST   | `/auth/otp/send`              | No     | Request OTP |
+| POST   | `/auth/otp/verify`            | No     | Verify OTP, get token + user |
+| GET    | `/auth/me`                    | Bearer | Current user |
+| GET    | `/auth/otp/dev/:identifier`   | No     | Dev: get OTP |
+| GET    | `/profile`                    | Bearer | User + onboarding (profile page data) |
+| PATCH  | `/profile`                    | Bearer | Update username, nickname, age, avatarUrl only |
+| PUT    | `/profile`                    | Bearer | Full onboarding questionnaire |
+| GET    | `/communities`                | No     | List communities |
+| GET    | `/communities/:idOrSlug`      | No     | Get community |
+| GET    | `/communities/:idOrSlug/posts` | No     | List posts (filter, page, limit) |
+| POST   | `/communities/:idOrSlug/posts` | Bearer | Create post |
+| GET    | `/posts/:id`                  | No     | Get post |
+| POST   | `/posts/:id/like`             | Bearer | Like/unlike |
+| GET    | `/posts/:id/comments`         | No     | List comments |
+| POST   | `/posts/:id/comments`         | Bearer | Create comment |
+| POST   | `/posts/:id/share`            | Bearer | Increment share count |
+
+---
+
+## 10. Enums (for dropdowns / validation)
 
 - **gender:** `male` | `female` | `non-binary` | `prefer-not-to-say`
 - **relationshipStatus:** `single` | `dating` | `married` | `complicated`
