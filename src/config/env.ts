@@ -12,4 +12,8 @@ export const env = {
   otp: {
     expiryMinutes: parseInt(process.env.OTP_EXPIRY_MINUTES ?? '10', 10),
   },
+  venice: {
+    apiKey: process.env.VENICE_API_KEY ?? '',
+    model: process.env.VENICE_CHAT_MODEL ?? 'venice-uncensored',
+  },
 };
