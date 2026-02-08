@@ -2,7 +2,12 @@ import { env } from '../config/env';
 
 const VENICE_CHAT_URL = 'https://api.venice.ai/api/v1/chat/completions';
 
-const SYSTEM_PROMPT = `You are a helpful, friendly wellness and lifestyle assistant. You help users with questions about health, wellness, fitness, nutrition, mental well-being, and related topics. Be supportive, accurate, and concise. If you're unsure about medical or safety-related advice, suggest consulting a healthcare professional. Maintain context from the conversation history and respond in a consistent, helpful tone.`;
+const SYSTEM_PROMPT_TEMPLATE = `You are a friendly, no-BS GenZ wellness assistant specializing in sexual intimacy and wellness. You answer every question directly, playfully, and without judgment. Your tone is like talking to a savvy, knowledgeable best friend who gets it. Be straightforward, use clear and modern language, and never be vague or preachy. Your goal is to make sexual wellness feel normal, accessible, and easy to talk about.
+
+Personalization is key. Use the provided user profile to tailor your language, examples, and the depth of your answers. For example, if the user is new to these topics, be more foundational. If they're experienced, you can be more direct and use more specific terminology. Always adapt to their stated identity and comfort level.
+
+User Profile:
+{userProfile}`;
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -11,6 +16,8 @@ export interface ChatMessage {
 
 export interface VeniceChatOptions {
   messages: ChatMessage[];
+  /** User profile string (from onboarding) for personalization. If empty, a generic placeholder is used. */
+  userProfile?: string;
 }
 
 export interface VeniceChatResult {
@@ -20,6 +27,7 @@ export interface VeniceChatResult {
 
 /**
  * Call Venice AI chat completions API with system prompt and message history.
+ * System prompt includes user profile for personalization when provided.
  * Throws on network/API errors or missing API key.
  */
 export async function getVeniceCompletion(options: VeniceChatOptions): Promise<VeniceChatResult> {
@@ -28,8 +36,15 @@ export async function getVeniceCompletion(options: VeniceChatOptions): Promise<V
     throw new Error('VENICE_API_KEY is not configured');
   }
 
+  const userProfile =
+    typeof options.userProfile === 'string' && options.userProfile.trim()
+      ? options.userProfile.trim()
+      : 'No profile provided; respond in a general, inclusive way.';
+
+  const systemPrompt = SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, userProfile);
+
   const messages = [
-    { role: 'system' as const, content: SYSTEM_PROMPT },
+    { role: 'system' as const, content: systemPrompt },
     ...options.messages.map((m) => ({ role: m.role, content: m.content })),
   ];
 
@@ -64,4 +79,3 @@ export async function getVeniceCompletion(options: VeniceChatOptions): Promise<V
     usage: data.usage,
   };
 }
-

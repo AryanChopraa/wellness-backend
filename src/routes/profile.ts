@@ -7,6 +7,10 @@ import type {
   RelationshipStatus,
   MainInterest,
   SexualExperience,
+  PhysicalActivityLevel,
+  SelfRatedInBed,
+  WhatToImprove,
+  IntimacyComfortLevel,
   ProfileQuestionnaireBody,
 } from '../types/user';
 
@@ -24,6 +28,10 @@ const MAIN_INTERESTS: MainInterest[] = [
   'general-education',
 ];
 const SEXUAL_EXPERIENCES: SexualExperience[] = ['virgin', 'some-experience', 'experienced', 'prefer-not-to-say'];
+const PHYSICAL_ACTIVITY_LEVELS: PhysicalActivityLevel[] = ['sedentary', 'light', 'moderate', 'active', 'prefer-not-to-say'];
+const SELF_RATED_IN_BED: SelfRatedInBed[] = ['beginner', 'somewhat-confident', 'confident', 'prefer-not-to-say'];
+const WHAT_TO_IMPROVE: WhatToImprove[] = ['stamina', 'technique', 'communication', 'confidence', 'exploration', 'prefer-not-to-say'];
+const INTIMACY_COMFORT_LEVELS: IntimacyComfortLevel[] = ['shy', 'getting-comfortable', 'comfortable', 'very-open', 'prefer-not-to-say'];
 
 const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
 const USERNAME_MIN = 3;
@@ -79,13 +87,10 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
           relationshipStatus: (onboarding as { relationshipStatus?: string }).relationshipStatus,
           mainInterests: (onboarding as { mainInterests?: string[] }).mainInterests,
           sexualExperience: (onboarding as { sexualExperience?: string }).sexualExperience,
-          whyImprove: (onboarding as { whyImprove?: string }).whyImprove,
-          primaryConcern: (onboarding as { primaryConcern?: string }).primaryConcern,
-          intimacyGoals: (onboarding as { intimacyGoals?: string }).intimacyGoals,
-          currentChallenges: (onboarding as { currentChallenges?: string }).currentChallenges,
-          whatBroughtYouHere: (onboarding as { whatBroughtYouHere?: string }).whatBroughtYouHere,
-          hopesFromPlatform: (onboarding as { hopesFromPlatform?: string }).hopesFromPlatform,
-          anythingElseWeShouldKnow: (onboarding as { anythingElseWeShouldKnow?: string }).anythingElseWeShouldKnow,
+          physicalActivityLevel: (onboarding as { physicalActivityLevel?: string }).physicalActivityLevel,
+          selfRatedInBed: (onboarding as { selfRatedInBed?: string }).selfRatedInBed,
+          whatToImproveChat: (onboarding as { whatToImproveChat?: string }).whatToImproveChat,
+          intimacyComfortLevel: (onboarding as { intimacyComfortLevel?: string }).intimacyComfortLevel,
         }
       : null,
   });
@@ -227,44 +232,65 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const textFields: (keyof ProfileQuestionnaireBody)[] = [
-    'whyImprove',
-    'primaryConcern',
-    'intimacyGoals',
-    'currentChallenges',
-    'whatBroughtYouHere',
-    'hopesFromPlatform',
-    'anythingElseWeShouldKnow',
-  ];
-  for (const key of textFields) {
-    const val = body[key];
-    if (typeof val !== 'string' || val.trim().length === 0) {
-      res.status(400).json({ error: `${key} is required and must be a non-empty string` });
-      return;
-    }
+  if (
+    body.physicalActivityLevel !== undefined &&
+    body.physicalActivityLevel !== null &&
+    !PHYSICAL_ACTIVITY_LEVELS.includes(body.physicalActivityLevel)
+  ) {
+    res.status(400).json({ error: 'Invalid physicalActivityLevel' });
+    return;
+  }
+  if (
+    body.selfRatedInBed !== undefined &&
+    body.selfRatedInBed !== null &&
+    !SELF_RATED_IN_BED.includes(body.selfRatedInBed)
+  ) {
+    res.status(400).json({ error: 'Invalid selfRatedInBed' });
+    return;
+  }
+  if (
+    body.whatToImproveChat !== undefined &&
+    body.whatToImproveChat !== null &&
+    !WHAT_TO_IMPROVE.includes(body.whatToImproveChat)
+  ) {
+    res.status(400).json({ error: 'Invalid whatToImproveChat' });
+    return;
+  }
+  if (
+    body.intimacyComfortLevel !== undefined &&
+    body.intimacyComfortLevel !== null &&
+    !INTIMACY_COMFORT_LEVELS.includes(body.intimacyComfortLevel)
+  ) {
+    res.status(400).json({ error: 'Invalid intimacyComfortLevel' });
+    return;
   }
 
   const userId = (user as { _id?: unknown })._id;
   const currentEmail = (user as { email?: string }).email;
   const currentPhone = (user as { phone?: string }).phone;
 
-  const onboardingPayload = {
+  const onboardingPayload: Record<string, unknown> = {
     userId,
     age,
     gender: body.gender!,
     relationshipStatus: body.relationshipStatus!,
     mainInterests: body.mainInterests!,
     sexualExperience: body.sexualExperience!,
-    whyImprove: body.whyImprove!.trim(),
-    primaryConcern: body.primaryConcern!.trim(),
-    intimacyGoals: body.intimacyGoals!.trim(),
-    currentChallenges: body.currentChallenges!.trim(),
-    whatBroughtYouHere: body.whatBroughtYouHere!.trim(),
-    hopesFromPlatform: body.hopesFromPlatform!.trim(),
-    anythingElseWeShouldKnow: body.anythingElseWeShouldKnow!.trim(),
   };
+  if (body.physicalActivityLevel !== undefined && body.physicalActivityLevel !== null) {
+    onboardingPayload.physicalActivityLevel = body.physicalActivityLevel;
+  }
+  if (body.selfRatedInBed !== undefined && body.selfRatedInBed !== null) {
+    onboardingPayload.selfRatedInBed = body.selfRatedInBed;
+  }
+  if (body.whatToImproveChat !== undefined && body.whatToImproveChat !== null) {
+    onboardingPayload.whatToImproveChat = body.whatToImproveChat;
+  }
+  if (body.intimacyComfortLevel !== undefined && body.intimacyComfortLevel !== null) {
+    onboardingPayload.intimacyComfortLevel = body.intimacyComfortLevel;
+  }
 
-  await Onboarding.findOneAndUpdate({ userId }, onboardingPayload, { upsert: true, new: true });
+  await Onboarding.findOneAndUpdate({ userId }, { $set: onboardingPayload }, { upsert: true, new: true });
 
   const userSetUpdate: Record<string, unknown> = {
     hasOnboarded: true,
@@ -339,13 +365,10 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
           relationshipStatus: (onboardingDoc as { relationshipStatus?: string }).relationshipStatus,
           mainInterests: (onboardingDoc as { mainInterests?: string[] }).mainInterests,
           sexualExperience: (onboardingDoc as { sexualExperience?: string }).sexualExperience,
-          whyImprove: (onboardingDoc as { whyImprove?: string }).whyImprove,
-          primaryConcern: (onboardingDoc as { primaryConcern?: string }).primaryConcern,
-          intimacyGoals: (onboardingDoc as { intimacyGoals?: string }).intimacyGoals,
-          currentChallenges: (onboardingDoc as { currentChallenges?: string }).currentChallenges,
-          whatBroughtYouHere: (onboardingDoc as { whatBroughtYouHere?: string }).whatBroughtYouHere,
-          hopesFromPlatform: (onboardingDoc as { hopesFromPlatform?: string }).hopesFromPlatform,
-          anythingElseWeShouldKnow: (onboardingDoc as { anythingElseWeShouldKnow?: string }).anythingElseWeShouldKnow,
+          physicalActivityLevel: (onboardingDoc as { physicalActivityLevel?: string }).physicalActivityLevel,
+          selfRatedInBed: (onboardingDoc as { selfRatedInBed?: string }).selfRatedInBed,
+          whatToImproveChat: (onboardingDoc as { whatToImproveChat?: string }).whatToImproveChat,
+          intimacyComfortLevel: (onboardingDoc as { intimacyComfortLevel?: string }).intimacyComfortLevel,
         }
       : null,
   });

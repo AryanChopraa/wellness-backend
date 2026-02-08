@@ -24,13 +24,23 @@ const OnboardingSchema = new Schema(
       required: true,
       enum: ['virgin', 'some-experience', 'experienced', 'prefer-not-to-say'],
     },
-    whyImprove: { type: String, required: true },
-    primaryConcern: { type: String, required: true },
-    intimacyGoals: { type: String, required: true },
-    currentChallenges: { type: String, required: true },
-    whatBroughtYouHere: { type: String, required: true },
-    hopesFromPlatform: { type: String, required: true },
-    anythingElseWeShouldKnow: { type: String, required: true },
+    // Optional MCQ fields for chat personalization (Version 2 questionnaire; skippable = prefer-not-to-say)
+    physicalActivityLevel: {
+      type: String,
+      enum: ['sedentary', 'light', 'moderate', 'active', 'prefer-not-to-say'],
+    },
+    selfRatedInBed: {
+      type: String,
+      enum: ['beginner', 'somewhat-confident', 'confident', 'prefer-not-to-say'],
+    },
+    whatToImproveChat: {
+      type: String,
+      enum: ['stamina', 'technique', 'communication', 'confidence', 'exploration', 'prefer-not-to-say'],
+    },
+    intimacyComfortLevel: {
+      type: String,
+      enum: ['shy', 'getting-comfortable', 'comfortable', 'very-open', 'prefer-not-to-say'],
+    },
   },
   { timestamps: true }
 );

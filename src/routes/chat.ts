@@ -6,6 +6,8 @@ import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { sendError } from '../utils/response';
 import { getVeniceCompletion, type ChatMessage } from '../services/veniceChat';
 import { generateConversationTitle } from '../services/openaiTitle';
+import { buildUserProfile } from '../utils/chatProfile';
+import { Onboarding } from '../models/Onboarding';
 
 const router = Router();
 
@@ -154,9 +156,12 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
   }));
   apiMessages.push({ role: 'user', content });
 
+  const onboarding = await Onboarding.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+  const userProfile = buildUserProfile(onboarding as Parameters<typeof buildUserProfile>[0]);
+
   let assistantContent: string;
   try {
-    const result = await getVeniceCompletion({ messages: apiMessages });
+    const result = await getVeniceCompletion({ messages: apiMessages, userProfile });
     assistantContent = result.content;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI service error';

@@ -269,15 +269,15 @@ Update only the fields shown on the **profile edit page**: username, age, and di
 
 ---
 
-### 2.8 Profile — Full onboarding questionnaire (Protected)
+### 2.8 Profile — Onboarding questionnaire (Protected, MCQ-only)
 
-Submit or update the **full** onboarding questionnaire (first-time or replace). All questionnaire fields are **required**. Optionally add the **other** contact: if user signed up with **email**, they can send **phone** here (and vice versa). Sets `hasOnboarded: true` after success.
+Submit or update the onboarding questionnaire (first-time or replace). All fields are **MCQ only** (no free-text). Optionally add the other contact (email/phone) if the user signed up with only one. Sets `hasOnboarded: true` after success.
 
 | Method | Path       | Auth        |
 |--------|------------|-------------|
 | PUT    | `/profile` | Bearer token|
 
-**Request body:** All of the following are required except `email` and `phone` (optional, for adding the missing contact).
+**Request body:** Required fields below; optional fields are for chat personalization (all have `prefer-not-to-say` to skip).
 
 | Field                     | Type     | Required | Notes |
 |---------------------------|----------|----------|--------|
@@ -287,13 +287,10 @@ Submit or update the **full** onboarding questionnaire (first-time or replace). 
 | `relationshipStatus`      | string   | Yes      | `single` \| `dating` \| `married` \| `complicated` |
 | `mainInterests`           | string[] | Yes      | At least one: `relationship-advice`, `intimacy-techniques`, `product-knowledge`, `general-education` |
 | `sexualExperience`        | string   | Yes      | `virgin` \| `some-experience` \| `experienced` \| `prefer-not-to-say` |
-| `whyImprove`              | string   | Yes      | Non-empty text |
-| `primaryConcern`          | string   | Yes      | Non-empty text |
-| `intimacyGoals`           | string   | Yes      | Non-empty text |
-| `currentChallenges`        | string   | Yes      | Non-empty text |
-| `whatBroughtYouHere`       | string   | Yes      | Non-empty text |
-| `hopesFromPlatform`        | string   | Yes      | Non-empty text |
-| `anythingElseWeShouldKnow` | string   | Yes      | Non-empty text |
+| `physicalActivityLevel`   | string   | No       | `sedentary` \| `light` \| `moderate` \| `active` \| `prefer-not-to-say` |
+| `selfRatedInBed`          | string   | No       | `beginner` \| `somewhat-confident` \| `confident` \| `prefer-not-to-say` |
+| `whatToImproveChat`       | string   | No       | `stamina` \| `technique` \| `communication` \| `confidence` \| `exploration` \| `prefer-not-to-say` |
+| `intimacyComfortLevel`    | string   | No       | `shy` \| `getting-comfortable` \| `comfortable` \| `very-open` \| `prefer-not-to-say` |
 | `email`                   | string   | No       | Only used if user has no email (e.g. signed up with phone) |
 | `phone`                   | string   | No       | Only used if user has no phone (e.g. signed up with email) |
 
@@ -306,13 +303,10 @@ Submit or update the **full** onboarding questionnaire (first-time or replace). 
   "relationshipStatus": "dating",
   "mainInterests": ["relationship-advice", "general-education"],
   "sexualExperience": "some-experience",
-  "whyImprove": "I want to feel more confident and informed.",
-  "primaryConcern": "Communication with my partner.",
-  "intimacyGoals": "Better understanding and comfort.",
-  "currentChallenges": "Lack of reliable information.",
-  "whatBroughtYouHere": "Recommendation from a friend.",
-  "hopesFromPlatform": "Non-judgmental guidance and community.",
-  "anythingElseWeShouldKnow": "Prefer anonymous in community.",
+  "physicalActivityLevel": "moderate",
+  "selfRatedInBed": "somewhat-confident",
+  "whatToImproveChat": "confidence",
+  "intimacyComfortLevel": "comfortable",
   "phone": "+1234567890"
 }
 ```
@@ -321,8 +315,10 @@ Submit or update the **full** onboarding questionnaire (first-time or replace). 
 Same shape as GET `/profile`: `{ "user": { ... }, "onboarding": { ... } }`. `user.hasOnboarded` will be `true`.
 
 **Errors:**
-- **400** — Validation (e.g. `"Age is required and must be at least 18"`, invalid enum, empty text field, invalid email/phone).
+- **400** — Validation (e.g. `"Age is required and must be at least 18"`, invalid enum, invalid email/phone).
 - **401** / **403** — Unauthorized or blocked.
+
+**GET /profile** returns `onboarding` with the same MCQ fields (no free-text fields).
 
 ---
 
@@ -355,7 +351,7 @@ On limit exceeded you get **429** and a JSON `error` message. Response may inclu
 ## 5. Initial Onboarding Flow
 
 1. **After first login:** You have `token` and `user.hasOnboarded === false`.
-2. **Show questionnaire:** Single or multi-step form with all required fields (see PUT `/profile` table). Optional: add email or phone if the user only had one.
+2. **Show questionnaire:** Single or multi-step form with required MCQ fields (see PUT `/profile` table). Optional: additional MCQs and email or phone if the user only had one.
 3. **Submit:**  
    `PUT /profile` with `Authorization: Bearer <token>` and the full body.
 4. **On success:** Update local state with returned `user` (now `hasOnboarded: true`) and optional `onboarding`. Redirect to main app.
@@ -593,9 +589,16 @@ Only the comment author can delete the comment. If the comment is top-level, all
 
 ## 10. Enums (for dropdowns / validation)
 
+**Required onboarding (PUT /profile):**
 - **gender:** `male` | `female` | `non-binary` | `prefer-not-to-say`
 - **relationshipStatus:** `single` | `dating` | `married` | `complicated`
 - **mainInterests:** `relationship-advice` | `intimacy-techniques` | `product-knowledge` | `general-education` (multi-select)
 - **sexualExperience:** `virgin` | `some-experience` | `experienced` | `prefer-not-to-say`
+
+**Optional onboarding (chat personalization; all include `prefer-not-to-say` to skip):**
+- **physicalActivityLevel:** `sedentary` | `light` | `moderate` | `active` | `prefer-not-to-say`
+- **selfRatedInBed:** `beginner` | `somewhat-confident` | `confident` | `prefer-not-to-say`
+- **whatToImproveChat:** `stamina` | `technique` | `communication` | `confidence` | `exploration` | `prefer-not-to-say`
+- **intimacyComfortLevel:** `shy` | `getting-comfortable` | `comfortable` | `very-open` | `prefer-not-to-say`
 
 Use these exact values in request bodies and when comparing to API responses.
