@@ -189,16 +189,40 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
     return;
   }
 
-  const body = (req.body ?? {}) as { content?: string };
+  const body = (req.body ?? {}) as { content?: string; parentId?: string };
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) {
     res.status(400).json({ error: 'content is required and must be non-empty' });
     return;
   }
 
+  let parentId: mongoose.Types.ObjectId | null = null;
+  if (body.parentId !== undefined && body.parentId !== null && String(body.parentId).trim() !== '') {
+    const parentIdStr = String(body.parentId).trim();
+    if (!mongoose.Types.ObjectId.isValid(parentIdStr)) {
+      res.status(400).json({ error: 'Invalid parentId' });
+      return;
+    }
+    const parent = await Comment.findOne({
+      _id: parentIdStr,
+      postId,
+    }).lean();
+    if (!parent) {
+      res.status(400).json({ error: 'Parent comment not found or does not belong to this post' });
+      return;
+    }
+    const parentParentId = (parent as { parentId?: unknown }).parentId;
+    if (parentParentId !== null && parentParentId !== undefined) {
+      res.status(400).json({ error: 'You can only reply to a top-level comment, not to a reply' });
+      return;
+    }
+    parentId = new mongoose.Types.ObjectId(parentIdStr);
+  }
+
   const comment = await Comment.create({
     postId,
     authorId,
+    parentId,
     content,
   });
   post.commentCount += 1;
@@ -228,6 +252,68 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
       createdAt: comment.createdAt,
     },
   });
+});
+
+/**
+ * DELETE /posts/:id — Delete a post (auth required, author only).
+ */
+router.delete('/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const userId = (user as { _id?: unknown })._id;
+  const { id: postId } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(postId)) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  const post = await Post.findById(postId);
+  if (!post) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  if (String((post as { authorId: unknown }).authorId) !== String(userId)) {
+    res.status(403).json({ error: 'You can only delete your own post' });
+    return;
+  }
+  await Comment.deleteMany({ postId });
+  await PostVote.deleteMany({ postId });
+  await Post.findByIdAndDelete(postId);
+  res.status(200).json({ message: 'Post deleted' });
+});
+
+/**
+ * DELETE /posts/:id/comments/:commentId — Delete a comment (auth required, author only).
+ * If the comment is top-level, any replies to it are also deleted.
+ */
+router.delete('/:id/comments/:commentId', requireAuth, async (req: AuthRequest, res: Response) => {
+  const user = req.user;
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const userId = (user as { _id?: unknown })._id;
+  const { id: postId, commentId } = req.params;
+  if (!mongoose.Types.ObjectId.isValid(postId) || !mongoose.Types.ObjectId.isValid(commentId)) {
+    res.status(404).json({ error: 'Post or comment not found' });
+    return;
+  }
+  const comment = await Comment.findOne({ _id: commentId, postId });
+  if (!comment) {
+    res.status(404).json({ error: 'Comment not found' });
+    return;
+  }
+  if (String((comment as { authorId: unknown }).authorId) !== String(userId)) {
+    res.status(403).json({ error: 'You can only delete your own comment' });
+    return;
+  }
+  const replies = await Comment.find({ postId, parentId: commentId });
+  const deletedCount = 1 + replies.length;
+  await Comment.deleteMany({ _id: { $in: [commentId, ...replies.map((r) => r._id)] } });
+  await Post.findByIdAndUpdate(postId, { $inc: { commentCount: -deletedCount } });
+  res.status(200).json({ message: 'Comment deleted' });
 });
 
 /**

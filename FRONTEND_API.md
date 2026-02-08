@@ -502,6 +502,8 @@ Toggles like. One like per user; calling again removes the like.
 
 **Query:** `page`, `limit` (same as posts; default limit 20).
 
+Comments are returned in a flat list. Top-level comments have `parentId: null`; replies have `parentId` set to the parent comment’s id. Only one level of replies is supported (no reply-to-reply).
+
 **Response (200):**
 ```json
 {
@@ -527,11 +529,31 @@ Toggles like. One like per user; calling again removes the like.
 |--------|---------------------|--------|
 | POST   | `/posts/:id/comments` | Bearer |
 
-**Body:** `{ "content": "string" }` (required, non-empty).
+**Body:** `{ "content": "string", "parentId": "optional-comment-id" }`. `content` is required and non-empty. `parentId` is optional: when present, the comment is a reply to that comment. Only one level of replies is allowed — you can only reply to a **top-level** comment (one with `parentId: null`). Replying to a reply returns **400** with message `"You can only reply to a top-level comment, not to a reply"`.
 
 **Response (201):** `{ "comment": { ... } }`.
 
-### 8.9 Share (increment share count)
+### 8.9 Delete post
+
+| Method | Path        | Auth   |
+|--------|-------------|--------|
+| DELETE | `/posts/:id` | Bearer |
+
+Only the post author can delete the post. Deletes the post, all comments on it, and all likes. **403** with `"You can only delete your own post"` if the user is not the author.
+
+**Response (200):** `{ "message": "Post deleted" }` (or similar).
+
+### 8.10 Delete comment
+
+| Method | Path                          | Auth   |
+|--------|-------------------------------|--------|
+| DELETE | `/posts/:id/comments/:commentId` | Bearer |
+
+Only the comment author can delete the comment. If the comment is top-level, all replies to it are also deleted, and the post’s `commentCount` is updated accordingly. **403** with `"You can only delete your own comment"` if the user is not the author.
+
+**Response (200):** `{ "message": "Comment deleted" }` (or similar).
+
+### 8.11 Share (increment share count)
 
 | Method | Path             | Auth   |
 |--------|------------------|--------|
@@ -560,9 +582,11 @@ Toggles like. One like per user; calling again removes the like.
 | GET    | `/communities/:idOrSlug/posts` | No     | List posts (filter, page, limit) |
 | POST   | `/communities/:idOrSlug/posts` | Bearer | Create post |
 | GET    | `/posts/:id`                  | No     | Get post |
+| DELETE | `/posts/:id`                  | Bearer | Delete post (author only) |
 | POST   | `/posts/:id/like`             | Bearer | Like/unlike |
 | GET    | `/posts/:id/comments`         | No     | List comments |
-| POST   | `/posts/:id/comments`         | Bearer | Create comment |
+| POST   | `/posts/:id/comments`         | Bearer | Create comment (optional parentId, one-level replies only) |
+| DELETE | `/posts/:id/comments/:commentId` | Bearer | Delete comment (author only) |
 | POST   | `/posts/:id/share`            | Bearer | Increment share count |
 
 ---
