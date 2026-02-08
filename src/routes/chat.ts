@@ -4,7 +4,8 @@ import { Conversation } from '../models/Conversation';
 import { Message } from '../models/Message';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { sendError } from '../utils/response';
-import { getVeniceCompletion, generateConversationTitle, type ChatMessage } from '../services/veniceChat';
+import { getVeniceCompletion, type ChatMessage } from '../services/veniceChat';
+import { generateConversationTitle } from '../services/openaiTitle';
 
 const router = Router();
 

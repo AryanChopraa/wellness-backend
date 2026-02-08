@@ -16,4 +16,8 @@ export const env = {
     apiKey: process.env.VENICE_API_KEY ?? '',
     model: process.env.VENICE_CHAT_MODEL ?? 'venice-uncensored',
   },
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY ?? '',
+    titleModel: process.env.OPENAI_TITLE_MODEL ?? 'gpt-4.1-nano',
+  },
 };
