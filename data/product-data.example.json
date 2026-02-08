@@ -1,0 +1,72 @@
+{
+  "categories": [
+    {
+      "name": "Lubricants",
+      "slug": "lubricants",
+      "description": "Water-based, silicone, and oil-based lubricants",
+      "level": 0,
+      "order": 1
+    },
+    {
+      "name": "Condoms",
+      "slug": "condoms",
+      "description": "Condoms and safer sex products",
+      "level": 0,
+      "order": 2
+    }
+  ],
+  "products": [
+    {
+      "name": "Example Water-Based Lube 100ml",
+      "slug": "example-water-based-lube-100ml",
+      "shortDescription": "Gentle, water-based lubricant for sensitive skin. Paraben-free.",
+      "description": "A longer description for the product page. Safe with condoms. Dermatologist tested. No parabens, no glycerin.",
+      "imageUrls": ["https://example.com/image1.jpg"],
+      "categorySlugs": ["lubricants"],
+      "productType": "lubricants",
+      "subTypes": ["water_based", "unscented"],
+      "attributes": {
+        "base": "water",
+        "volumeMl": 100,
+        "flavor": "unscented"
+      },
+      "tags": ["sensitive", "paraben-free", "condom-safe", "organic"],
+      "keywords": ["lube", "water based", "gentle", "sensitive skin"],
+      "links": [
+        {
+          "url": "https://example-retailer.com/product/123",
+          "retailerName": "Example Retailer",
+          "linkType": "buy",
+          "isPrimary": true
+        }
+      ],
+      "targetGender": "unisex",
+      "targetAgeGroup": "all",
+      "isAdult": false,
+      "requiresPrescription": false
+    },
+    {
+      "name": "Sensitive Skin Condoms 12-Pack",
+      "slug": "sensitive-skin-condoms-12",
+      "shortDescription": "Latex-free condoms for sensitive skin.",
+      "description": "Full product description. Non-latex material. 12 count.",
+      "imageUrls": [],
+      "categorySlugs": ["condoms"],
+      "productType": "condoms",
+      "subTypes": ["non_latex"],
+      "attributes": { "material": "non-latex", "count": 12 },
+      "tags": ["sensitive", "latex-free", "beginner-friendly"],
+      "keywords": ["condom", "sensitive", "non latex"],
+      "links": [
+        {
+          "url": "https://example-retailer.com/condoms",
+          "retailerName": "Example Retailer",
+          "linkType": "buy",
+          "isPrimary": true
+        }
+      ],
+      "targetGender": "unisex",
+      "targetAgeGroup": "all"
+    }
+  ]
+}
