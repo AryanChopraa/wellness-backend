@@ -10,6 +10,7 @@ export interface AuthRequest extends RequestWithBlocked {
 
 /**
  * Optional auth: sets req.userId, req.user, and req.isBlocked if valid token present.
+ * If token is valid but user is not found, sets req.isBlocked = true and returns 403 (response includes isBlocked: true).
  */
 export async function optionalAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -26,14 +27,17 @@ export async function optionalAuth(req: AuthRequest, res: Response, next: NextFu
   req.userId = payload.userId;
   try {
     const user = await User.findById(payload.userId).lean();
-    if (user) {
-      req.isBlocked = (user as { isBlocked?: boolean }).isBlocked === true;
-      if (req.isBlocked) {
-        res.status(403).json({ error: 'Account is blocked' });
-        return;
-      }
-      req.user = user as unknown as Record<string, unknown>;
+    if (!user) {
+      req.isBlocked = true;
+      res.status(403).json({ error: 'Account not found' });
+      return;
     }
+    req.isBlocked = (user as { isBlocked?: boolean }).isBlocked === true;
+    if (req.isBlocked) {
+      res.status(403).json({ error: 'Account is blocked' });
+      return;
+    }
+    req.user = user as unknown as Record<string, unknown>;
   } catch {
     // ignore
   }
@@ -41,7 +45,7 @@ export async function optionalAuth(req: AuthRequest, res: Response, next: NextFu
 }
 
 /**
- * Require auth: 401 if no valid token or user not found. Sets req.isBlocked from user.
+ * Require auth: 401 if no valid token; 403 with isBlocked: true if user not found or user blocked. Sets req.isBlocked from user (or true when user not found).
  */
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -59,7 +63,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   try {
     const user = await User.findById(payload.userId).lean();
     if (!user) {
-      res.status(401).json({ error: 'User not found' });
+      req.isBlocked = true;
+      res.status(403).json({ error: 'Account not found' });
       return;
     }
     req.isBlocked = (user as { isBlocked?: boolean }).isBlocked === true;
