@@ -12,11 +12,40 @@ This document describes all API endpoints, auth flow, and initial onboarding for
 
 ---
 
+## Standard response structure (every request)
+
+**Every API response** (success or error) includes these three fields so the frontend can show a message and handle blocked users:
+
+```ts
+// Top-level fields on every response
+{
+  success: boolean;   // true if request succeeded, false otherwise
+  message: string;   // Description for the frontend — show in UI / toast
+  isBlocked: boolean; // If the current user is blocked; when true, frontend must block access (e.g. logout, show "Account blocked")
+}
+```
+
+Plus endpoint-specific payload (e.g. `user`, `token`, `posts`, `error`). For errors, `error` is also present and equals the user-facing message (same as `message`).
+
+**Examples:**
+- Success: `{ "success": true, "message": "Logged in successfully", "isBlocked": false, "token": "...", "user": { ... } }`
+- Error: `{ "success": false, "message": "Valid email is required", "isBlocked": false, "error": "Valid email is required" }`
+- Blocked user: `{ "success": false, "message": "Account is blocked", "isBlocked": true, "error": "Account is blocked" }`
+
+**Frontend:**
+1. Parse JSON on every response.
+2. Show `body.message` (or `body.error` for errors) to the user — do not hardcode strings; use what the backend returns.
+3. If `body.isBlocked === true`, clear token and block the user (e.g. redirect to a “Account blocked” screen).
+
+---
+
 ## 1. Auth Overview
 
 - **No passwords.** Auth is OTP-only: user enters **email** OR **phone** → backend sends OTP → user enters OTP → backend returns **JWT**.
 - **Signup and signin use the same flow:** same endpoints; if the user doesn’t exist, an account is created.
 - **Token:** After OTP verification you receive a `token`. Store it (e.g. secure storage / cookie) and send it on every request to protected routes.
+- **OTP is single-use:** The backend marks the OTP as used (it is not deleted) after successful verification so the same code cannot be used again. OTPs are kept in the collection for rate-limit tracking.
+- **OTP limit per email/phone:** A given email or phone number can request at most **5 OTPs in 2 hours**. After that, the API returns **429** with a message asking to try again after 2 hours. Frontend should show the returned `message` or `error`.
 
 ---
 
@@ -30,7 +59,7 @@ This document describes all API endpoints, auth flow, and initial onboarding for
 
 **Response (200):**
 ```json
-{ "status": "ok", "timestamp": "2025-02-07T12:00:00.000Z" }
+{ "success": true, "message": "OK", "isBlocked": false, "status": "ok", "timestamp": "2025-02-07T12:00:00.000Z" }
 ```
 
 ---
@@ -69,7 +98,8 @@ Phone: at least 10 digits; non-digits are stripped. E.164 or digits-only both wo
 - **400** — `{ "error": "Provide either email or phone, not both" }`
 - **400** — `{ "error": "Valid email is required" }` or `"Valid phone number is required (at least 10 digits)"`
 - **403** — `{ "error": "Account is blocked" }`
-- **429** — `{ "error": "Too many OTP requests. Please try again later." }`
+- **429** — `{ "error": "Too many OTP requests. Please try again later." }` (IP rate limit)
+- **429** — `{ "error": "Too many OTP requests for this email. For your security, please try again after 2 hours." }` (same for phone; per-email/phone limit: 5 in 2 hours)
 
 ---
 
@@ -105,8 +135,6 @@ Phone: at least 10 digits; non-digits are stripped. E.164 or digits-only both wo
     "email": "user@example.com",
     "phone": null,
     "username": "jane_doe",
-    "nickname": "Jane",
-    "displayName": "user",
     "avatarUrl": null,
     "hasOnboarded": false,
     "preferences": { "anonymousInCommunity": false, "notifications": true }
@@ -140,8 +168,6 @@ Phone: at least 10 digits; non-digits are stripped. E.164 or digits-only both wo
     "email": "user@example.com",
     "phone": null,
     "username": "jane_doe",
-    "nickname": "Jane",
-    "displayName": "user",
     "avatarUrl": null,
     "hasOnboarded": true,
     "preferences": { "anonymousInCommunity": false, "notifications": true }
@@ -176,7 +202,7 @@ Only when backend is **not** in production. Use to get the current OTP for testi
 
 ### 2.6 Profile — Get (Protected)
 
-Returns current user and their onboarding answers (if any). Use for the profile page and to prefill onboarding. **Profile page** should display and allow editing only: `username`, `nickname`, `age`, `avatarUrl` (display picture; for future use).
+Returns current user and their onboarding answers (if any). Use for the profile page and to prefill onboarding. **Profile page** should display and allow editing only: `username`, `age`, `avatarUrl` (display picture; for future use).
 
 | Method | Path        | Auth        |
 |--------|-------------|-------------|
@@ -190,8 +216,6 @@ Returns current user and their onboarding answers (if any). Use for the profile 
     "email": "user@example.com",
     "phone": null,
     "username": "jane_doe",
-    "nickname": "Jane",
-    "displayName": "user",
     "avatarUrl": null,
     "age": 25,
     "hasOnboarded": true,
@@ -221,7 +245,7 @@ Returns current user and their onboarding answers (if any). Use for the profile 
 
 ### 2.7 Profile — Update (Edit profile page) (Protected)
 
-Update only the fields shown on the **profile edit page**: username, nickname, age, and display picture (`avatarUrl`). All fields are optional; send only the ones you want to change.
+Update only the fields shown on the **profile edit page**: username, age, and display picture (`avatarUrl`). All fields are optional; send only the ones you want to change.
 
 | Method | Path        | Auth        |
 |--------|-------------|-------------|
@@ -232,16 +256,15 @@ Update only the fields shown on the **profile edit page**: username, nickname, a
 | Field       | Type   | Notes |
 |-------------|--------|--------|
 | `username`  | string | 3–30 chars, only `a-z`, `0-9`, `_`; unique; stored lowercase |
-| `nickname`  | string | Non-empty, max 50 chars |
 | `age`       | number | Must be ≥ 18 |
 | `avatarUrl` | string | URL for display picture (for future use); empty string clears it |
 
-**Example:** `PATCH /profile` with `{ "nickname": "Janey", "age": 26 }` updates only nickname and age.
+**Example:** `PATCH /profile` with `{ "age": 26 }` updates only age.
 
-**Success (200):** `{ "user": { id, email, phone, username, nickname, displayName, avatarUrl, age, hasOnboarded, preferences } }`.
+**Success (200):** `{ "user": { id, email, phone, username, avatarUrl, age, hasOnboarded, preferences } }`.
 
 **Errors:**
-- **400** — Validation (e.g. username taken, age &lt; 18, empty nickname) or no fields provided.
+- **400** — Validation (e.g. username taken, age &lt; 18) or no fields provided.
 - **401** / **403** — Unauthorized or blocked.
 
 ---
@@ -259,7 +282,6 @@ Submit or update the **full** onboarding questionnaire (first-time or replace). 
 | Field                     | Type     | Required | Notes |
 |---------------------------|----------|----------|--------|
 | `username`                | string   | Yes      | 3–30 chars, only `a-z`, `0-9`, `_` (unique; stored lowercase) |
-| `nickname`                | string   | Yes      | Non-empty, max 50 chars (display name in community) |
 | `age`                     | number   | Yes      | Must be ≥ 18 |
 | `gender`                  | string   | Yes      | `male` \| `female` \| `non-binary` \| `prefer-not-to-say` |
 | `relationshipStatus`      | string   | Yes      | `single` \| `dating` \| `married` \| `complicated` |
@@ -279,7 +301,6 @@ Submit or update the **full** onboarding questionnaire (first-time or replace). 
 ```json
 {
   "username": "jane_doe",
-  "nickname": "Jane",
   "age": 25,
   "gender": "female",
   "relationshipStatus": "dating",
@@ -425,7 +446,6 @@ There is one default community (`slug: "general"`). Users can post, comment, lik
       "author": {
         "id": "...",
         "username": "jane_doe",
-        "nickname": "Jane",
         "avatarUrl": null
       },
       "title": "...",
@@ -441,7 +461,7 @@ There is one default community (`slug: "general"`). Users can post, comment, lik
   "filter": "trending"
 }
 ```
-If user has `preferences.anonymousInCommunity: true`, `author` shows `nickname: "Anonymous"` and `username: null`, `avatarUrl: null`.
+If user has `preferences.anonymousInCommunity: true`, `author` shows `username: "Anonymous"` and `avatarUrl: null`.
 
 ### 8.4 Create post
 
@@ -490,7 +510,7 @@ Toggles like. One like per user; calling again removes the like.
       "id": "...",
       "postId": "...",
       "authorId": "...",
-      "author": { "id": "...", "username": "...", "nickname": "...", "avatarUrl": null },
+      "author": { "id": "...", "username": "...", "avatarUrl": null },
       "parentId": null,
       "content": "...",
       "likeCount": 0,
@@ -533,7 +553,7 @@ Toggles like. One like per user; calling again removes the like.
 | GET    | `/auth/me`                    | Bearer | Current user |
 | GET    | `/auth/otp/dev/:identifier`   | No     | Dev: get OTP |
 | GET    | `/profile`                    | Bearer | User + onboarding (profile page data) |
-| PATCH  | `/profile`                    | Bearer | Update username, nickname, age, avatarUrl only |
+| PATCH  | `/profile`                    | Bearer | Update username, age, avatarUrl only |
 | PUT    | `/profile`                    | Bearer | Full onboarding questionnaire |
 | GET    | `/communities`                | No     | List communities |
 | GET    | `/communities/:idOrSlug`      | No     | Get community |

@@ -1,14 +1,15 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { verifyToken } from '../services/jwt';
 import { User } from '../models/User';
+import type { RequestWithBlocked } from './responseWrapper';
 
-export interface AuthRequest extends Request {
+export interface AuthRequest extends RequestWithBlocked {
   userId?: string;
   user?: Record<string, unknown>;
 }
 
 /**
- * Optional auth: sets req.userId and req.user if valid token present.
+ * Optional auth: sets req.userId, req.user, and req.isBlocked if valid token present.
  */
 export async function optionalAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -26,7 +27,8 @@ export async function optionalAuth(req: AuthRequest, res: Response, next: NextFu
   try {
     const user = await User.findById(payload.userId).lean();
     if (user) {
-      if ((user as { isBlocked?: boolean }).isBlocked) {
+      req.isBlocked = (user as { isBlocked?: boolean }).isBlocked === true;
+      if (req.isBlocked) {
         res.status(403).json({ error: 'Account is blocked' });
         return;
       }
@@ -39,7 +41,7 @@ export async function optionalAuth(req: AuthRequest, res: Response, next: NextFu
 }
 
 /**
- * Require auth: 401 if no valid token or user not found.
+ * Require auth: 401 if no valid token or user not found. Sets req.isBlocked from user.
  */
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
@@ -60,7 +62,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       res.status(401).json({ error: 'User not found' });
       return;
     }
-    if ((user as { isBlocked?: boolean }).isBlocked) {
+    req.isBlocked = (user as { isBlocked?: boolean }).isBlocked === true;
+    if (req.isBlocked) {
       res.status(403).json({ error: 'Account is blocked' });
       return;
     }

@@ -5,6 +5,7 @@ import { profileRoutes } from './routes/profile';
 import { communityRoutes } from './routes/communities';
 import { postRoutes } from './routes/posts';
 import { authGeneralLimiter } from './middleware/rateLimit';
+import { setBlockedFlag, wrapResponse } from './middleware/responseWrapper';
 
 const app = express();
 
@@ -18,8 +19,11 @@ app.use(
 
 app.use(express.json());
 
+app.use(setBlockedFlag);
+app.use(wrapResponse);
+
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), message: 'OK' });
 });
 
 app.use('/auth', authGeneralLimiter, authRoutes);

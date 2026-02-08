@@ -193,7 +193,7 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
 
   const authorIds = [...new Set(posts.map((p) => String((p as { authorId: unknown }).authorId)))];
   const authors = await User.find({ _id: { $in: authorIds } })
-    .select('username nickname displayName avatarUrl preferences.anonymousInCommunity')
+    .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
 
   const authorMap = new Map(
@@ -202,8 +202,6 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       {
         id: (a as { _id: unknown })._id,
         username: (a as { username?: string }).username,
-        nickname: (a as { nickname?: string }).nickname,
-        displayName: (a as { displayName?: string }).displayName,
         avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
         anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
       },
@@ -221,8 +219,7 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       author: author
         ? {
             id: author.id,
-            username: showAnonymous ? null : author.username,
-            nickname: showAnonymous ? 'Anonymous' : author.nickname ?? author.displayName,
+            username: showAnonymous ? 'Anonymous' : author.username,
             avatarUrl: showAnonymous ? null : author.avatarUrl,
           }
         : null,
@@ -289,12 +286,13 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
   });
 
   const author = await User.findById((user as { _id?: unknown })._id)
-    .select('username nickname displayName avatarUrl preferences.anonymousInCommunity')
+    .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
 
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
 
   res.status(201).json({
+    message: 'Post created',
     post: {
       id: post._id,
       communityId: post.communityId,
@@ -302,8 +300,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
       author: author
         ? {
             id: (author as { _id: unknown })._id,
-            username: showAnonymous ? null : (author as { username?: string }).username,
-            nickname: showAnonymous ? 'Anonymous' : (author as { nickname?: string }).nickname ?? (author as { displayName?: string }).displayName,
+            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
             avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
           }
         : null,

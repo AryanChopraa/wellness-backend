@@ -61,13 +61,12 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const userId = (user as { _id?: unknown })._id;
   const onboarding = await Onboarding.findOne({ userId }).lean();
   res.status(200).json({
+    message: 'Profile loaded',
     user: {
       id: (user as { _id?: unknown })._id,
       email: (user as { email?: string }).email,
       phone: (user as { phone?: string }).phone,
       username: (user as { username?: string }).username,
-      nickname: (user as { nickname?: string }).nickname,
-      displayName: (user as { displayName?: string }).displayName,
       avatarUrl: (user as { avatarUrl?: string }).avatarUrl,
       age: (user as { age?: number }).age ?? (onboarding ? (onboarding as { age?: number }).age : undefined),
       hasOnboarded: (user as { hasOnboarded?: boolean }).hasOnboarded,
@@ -93,7 +92,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * PATCH /profile — Protected. Update only profile page fields: username, nickname, age, avatarUrl.
+ * PATCH /profile — Protected. Update only profile page fields: username, age, avatarUrl.
  * All fields optional; only provided fields are updated. Use for the "Edit profile" page.
  */
 router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -103,7 +102,7 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
   const userId = (user as { _id?: unknown })._id;
-  const body = (req.body ?? {}) as { username?: string; nickname?: string; age?: number; avatarUrl?: string };
+  const body = (req.body ?? {}) as { username?: string; age?: number; avatarUrl?: string };
   const updates: Record<string, unknown> = {};
 
   if (body.username !== undefined) {
@@ -122,19 +121,6 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
     updates.username = usernameLower;
   }
 
-  if (body.nickname !== undefined) {
-    if (typeof body.nickname !== 'string' || body.nickname.trim().length === 0) {
-      res.status(400).json({ error: 'nickname must be a non-empty string' });
-      return;
-    }
-    const nickname = body.nickname.trim();
-    if (nickname.length > 50) {
-      res.status(400).json({ error: 'nickname must be at most 50 characters' });
-      return;
-    }
-    updates.nickname = nickname;
-  }
-
   if (body.age !== undefined) {
     const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age), 10);
     if (!Number.isFinite(age) || age < MIN_AGE) {
@@ -149,7 +135,7 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   if (Object.keys(updates).length === 0) {
-    res.status(400).json({ error: 'Provide at least one field to update: username, nickname, age, avatarUrl' });
+    res.status(400).json({ error: 'Provide at least one field to update: username, age, avatarUrl' });
     return;
   }
 
@@ -168,13 +154,12 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 
   res.status(200).json({
+    message: 'Profile updated',
     user: {
       id: (updatedUser as { _id?: unknown })._id,
       email: (updatedUser as { email?: string }).email,
       phone: (updatedUser as { phone?: string }).phone,
       username: (updatedUser as { username?: string }).username,
-      nickname: (updatedUser as { nickname?: string }).nickname,
-      displayName: (updatedUser as { displayName?: string }).displayName,
       avatarUrl: (updatedUser as { avatarUrl?: string }).avatarUrl,
       age: (updatedUser as { age?: number }).age,
       hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,
@@ -205,16 +190,6 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const existingByUsername = await User.findOne({ username: usernameLower, _id: { $ne: (user as { _id?: unknown })._id } });
   if (existingByUsername) {
     res.status(400).json({ error: 'This username is already taken' });
-    return;
-  }
-
-  if (!body.nickname || typeof body.nickname !== 'string' || body.nickname.trim().length === 0) {
-    res.status(400).json({ error: 'nickname is required and must be a non-empty string' });
-    return;
-  }
-  const nickname = (body.nickname as string).trim();
-  if (nickname.length > 50) {
-    res.status(400).json({ error: 'nickname must be at most 50 characters' });
     return;
   }
 
@@ -294,7 +269,6 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const userSetUpdate: Record<string, unknown> = {
     hasOnboarded: true,
     username: usernameLower,
-    nickname,
     age,
   };
   const pushProviders: { provider: string; providerId: string; identifier: string; linkedAt: Date }[] = [];
@@ -347,13 +321,12 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const onboardingDoc = await Onboarding.findOne({ userId }).lean();
 
   res.status(200).json({
+    message: 'Onboarding saved',
     user: {
       id: (updatedUser as { _id?: unknown })._id,
       email: (updatedUser as { email?: string }).email,
       phone: (updatedUser as { phone?: string }).phone,
       username: (updatedUser as { username?: string }).username,
-      nickname: (updatedUser as { nickname?: string }).nickname,
-      displayName: (updatedUser as { displayName?: string }).displayName,
       avatarUrl: (updatedUser as { avatarUrl?: string }).avatarUrl,
       age: (updatedUser as { age?: number }).age,
       hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,

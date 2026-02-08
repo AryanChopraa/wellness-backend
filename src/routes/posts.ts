@@ -26,11 +26,12 @@ router.get('/:id', async (req, res: Response) => {
     return;
   }
   const author = await User.findById((post as { authorId: unknown }).authorId)
-    .select('username nickname displayName avatarUrl preferences.anonymousInCommunity')
+    .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
 
   res.status(200).json({
+    message: 'OK',
     post: {
       id: (post as { _id: unknown })._id,
       communityId: (post as { communityId: unknown }).communityId,
@@ -38,8 +39,7 @@ router.get('/:id', async (req, res: Response) => {
       author: author
         ? {
             id: (author as { _id: unknown })._id,
-            username: showAnonymous ? null : (author as { username?: string }).username,
-            nickname: showAnonymous ? 'Anonymous' : (author as { nickname?: string }).nickname ?? (author as { displayName?: string }).displayName,
+            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
             avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
           }
         : null,
@@ -122,7 +122,7 @@ router.get('/:id/comments', async (req, res: Response) => {
 
   const authorIds = [...new Set(comments.map((c) => String((c as { authorId: unknown }).authorId)))];
   const authors = await User.find({ _id: { $in: authorIds } })
-    .select('username nickname displayName avatarUrl preferences.anonymousInCommunity')
+    .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
   const authorMap = new Map(
     authors.map((a) => [
@@ -130,8 +130,6 @@ router.get('/:id/comments', async (req, res: Response) => {
       {
         id: (a as { _id: unknown })._id,
         username: (a as { username?: string }).username,
-        nickname: (a as { nickname?: string }).nickname,
-        displayName: (a as { displayName?: string }).displayName,
         avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
         anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
       },
@@ -148,8 +146,7 @@ router.get('/:id/comments', async (req, res: Response) => {
       author: author
         ? {
             id: author.id,
-            username: showAnonymous ? null : author.username,
-            nickname: showAnonymous ? 'Anonymous' : author.nickname ?? author.displayName,
+            username: showAnonymous ? 'Anonymous' : author.username,
             avatarUrl: showAnonymous ? null : author.avatarUrl,
           }
         : null,
@@ -208,11 +205,12 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
   await post.save();
 
   const author = await User.findById(authorId)
-    .select('username nickname displayName avatarUrl preferences.anonymousInCommunity')
+    .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
 
   res.status(201).json({
+    message: 'Comment added',
     comment: {
       id: comment._id,
       postId: comment.postId,
@@ -220,8 +218,7 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
       author: author
         ? {
             id: (author as { _id: unknown })._id,
-            username: showAnonymous ? null : (author as { username?: string }).username,
-            nickname: showAnonymous ? 'Anonymous' : (author as { nickname?: string }).nickname ?? (author as { displayName?: string }).displayName,
+            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
             avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
           }
         : null,

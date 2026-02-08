@@ -4,6 +4,7 @@ import * as otpService from '../services/otp';
 import { signToken } from '../services/jwt';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { otpSendLimiter, otpVerifyLimiter } from '../middleware/rateLimit';
+import { sendError } from '../utils/response';
 import { env } from '../config/env';
 import type { OtpIdentifierType } from '../types/auth';
 
@@ -92,21 +93,28 @@ router.post('/signup', otpSendLimiter, async (req: Request, res: Response) => {
     const providerId = `otp:${identifier}:${Date.now()}`;
     user = await User.create({
       ...(type === 'email' ? { email: identifier } : { phone: identifier }),
-      displayName: type === 'email' ? identifier.split('@')[0] : 'User',
       authProviders: [{ provider: 'otp', providerId, identifier, linkedAt: new Date() }],
     });
     created = true;
   }
 
-  const { code, expiresAt } = await otpService.createOtp(identifier, type);
-  if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
-    console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+  try {
+    const { code, expiresAt } = await otpService.createOtp(identifier, type);
+    if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+    }
+    res.status(created ? 201 : 200).json({
+      message: created ? 'Account created. Check your email/phone for the OTP.' : 'If an account exists, an OTP has been sent',
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 429) {
+      sendError(res, 429, e.message);
+      return;
+    }
+    throw err;
   }
-
-  res.status(created ? 201 : 200).json({
-    message: created ? 'Account created. Check your email/phone for the OTP.' : 'If an account exists, an OTP has been sent',
-    expiresAt: expiresAt.toISOString(),
-  });
 });
 
 /**
@@ -127,7 +135,6 @@ router.post('/signin', otpSendLimiter, async (req: Request, res: Response) => {
     const providerId = `otp:${identifier}:${Date.now()}`;
     user = await User.create({
       ...(type === 'email' ? { email: identifier } : { phone: identifier }),
-      displayName: type === 'email' ? identifier.split('@')[0] : 'User',
       authProviders: [{ provider: 'otp', providerId, identifier, linkedAt: new Date() }],
     });
   } else {
@@ -143,15 +150,23 @@ router.post('/signin', otpSendLimiter, async (req: Request, res: Response) => {
     }
   }
 
-  const { code, expiresAt } = await otpService.createOtp(identifier, type);
-  if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
-    console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+  try {
+    const { code, expiresAt } = await otpService.createOtp(identifier, type);
+    if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+    }
+    res.status(200).json({
+      message: 'OTP sent',
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 429) {
+      sendError(res, 429, e.message);
+      return;
+    }
+    throw err;
   }
-
-  res.status(200).json({
-    message: 'OTP sent',
-    expiresAt: expiresAt.toISOString(),
-  });
 });
 
 /**
@@ -172,7 +187,6 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
     const providerId = `otp:${identifier}:${Date.now()}`;
     user = await User.create({
       ...(type === 'email' ? { email: identifier } : { phone: identifier }),
-      displayName: type === 'email' ? identifier.split('@')[0] : 'User',
       authProviders: [{ provider: 'otp', providerId, identifier, linkedAt: new Date() }],
     });
   } else {
@@ -188,15 +202,23 @@ router.post('/otp/send', otpSendLimiter, async (req: Request, res: Response) => 
     }
   }
 
-  const { code, expiresAt } = await otpService.createOtp(identifier, type);
-  if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
-    console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+  try {
+    const { code, expiresAt } = await otpService.createOtp(identifier, type);
+    if (env.jwt.secret.includes('dev') || process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] OTP for ${identifier}: ${code} (expires ${expiresAt.toISOString()})`);
+    }
+    res.status(200).json({
+      message: 'OTP sent',
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (err) {
+    const e = err as Error & { statusCode?: number };
+    if (e.statusCode === 429) {
+      sendError(res, 429, e.message);
+      return;
+    }
+    throw err;
   }
-
-  res.status(200).json({
-    message: 'OTP sent',
-    expiresAt: expiresAt.toISOString(),
-  });
 });
 
 /**
@@ -257,15 +279,15 @@ router.post('/otp/verify', otpVerifyLimiter, async (req: Request, res: Response)
     ...(type === 'email' ? { email: identifier } : { phone: identifier }),
   });
 
+  (req as AuthRequest).isBlocked = (userDoc as { isBlocked?: boolean }).isBlocked === true;
   res.status(200).json({
+    message: 'Logged in successfully',
     token,
     user: {
       id: (u as { _id?: unknown })._id,
       email: (u as { email?: string }).email,
       phone: (u as { phone?: string }).phone,
       username: (u as { username?: string }).username,
-      nickname: (u as { nickname?: string }).nickname,
-      displayName: (u as { displayName?: string }).displayName,
       avatarUrl: (u as { avatarUrl?: string }).avatarUrl,
       hasOnboarded: (u as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (u as { preferences?: unknown }).preferences,
@@ -288,8 +310,6 @@ router.get('/me', requireAuth, (req: AuthRequest, res: Response) => {
       email: (user as { email?: string }).email,
       phone: (user as { phone?: string }).phone,
       username: (user as { username?: string }).username,
-      nickname: (user as { nickname?: string }).nickname,
-      displayName: (user as { displayName?: string }).displayName,
       avatarUrl: (user as { avatarUrl?: string }).avatarUrl,
       hasOnboarded: (user as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (user as { preferences?: unknown }).preferences,

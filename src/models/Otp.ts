@@ -6,6 +6,7 @@ export interface IOtp {
   code: string;
   expiresAt: Date;
   type: OtpIdentifierType;
+  usedAt?: Date;
 }
 
 const OtpSchema = new Schema<IOtp>(
@@ -14,6 +15,7 @@ const OtpSchema = new Schema<IOtp>(
     code: { type: String, required: true },
     expiresAt: { type: Date, required: true, index: true },
     type: { type: String, required: true, enum: ['email', 'phone'] },
+    usedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
