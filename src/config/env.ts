@@ -20,4 +20,9 @@ export const env = {
     apiKey: process.env.OPENAI_API_KEY ?? '',
     titleModel: process.env.OPENAI_TITLE_MODEL ?? 'gpt-4.1-nano',
   },
+  gcs: {
+    bucket: process.env.GCS_BUCKET ?? '',
+    /** Path to service account JSON key file. Or set GOOGLE_APPLICATION_CREDENTIALS. */
+    keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? process.env.GCS_KEY_FILENAME ?? '',
+  },
 };

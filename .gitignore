@@ -3,3 +3,6 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Service account keys and other secrets (never commit)
+secrets/
