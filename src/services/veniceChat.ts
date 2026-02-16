@@ -10,7 +10,9 @@ export interface ChatMessage {
 
 export interface VeniceChatOptions {
   messages: ChatMessage[];
-  /** User profile string (from onboarding) for personalization. If empty, a generic placeholder is used. */
+  /** When set, used as the full system prompt (e.g. Ally with wellness profile). Otherwise template + userProfile. */
+  systemPrompt?: string;
+  /** User profile string (from onboarding or wellness assessment) for personalization. Used when systemPrompt is not set. */
   userProfile?: string;
 }
 
@@ -30,12 +32,16 @@ export async function getVeniceCompletion(options: VeniceChatOptions): Promise<V
     throw new Error('VENICE_API_KEY is not configured');
   }
 
-  const userProfile =
-    typeof options.userProfile === 'string' && options.userProfile.trim()
-      ? options.userProfile.trim()
-      : 'No profile provided; respond in a general, inclusive way.';
-
-  const systemPrompt = CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, userProfile);
+  const systemPrompt =
+    typeof options.systemPrompt === 'string' && options.systemPrompt.trim()
+      ? options.systemPrompt.trim()
+      : (() => {
+          const userProfile =
+            typeof options.userProfile === 'string' && options.userProfile.trim()
+              ? options.userProfile.trim()
+              : 'No profile provided; respond in a general, inclusive way.';
+          return CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, userProfile);
+        })();
 
   const messages = [
     { role: 'system' as const, content: systemPrompt },

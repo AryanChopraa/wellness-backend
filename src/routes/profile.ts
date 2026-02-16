@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { User } from '../models/User';
 import { Onboarding } from '../models/Onboarding';
+import { UserSavedPost } from '../models/UserSavedPost';
+import { Post } from '../models/Post';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import type {
   Gender,
@@ -372,6 +374,39 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
         }
       : null,
   });
+});
+
+/**
+ * GET /profile/saved-posts — List current user's saved posts (auth required).
+ */
+router.get('/saved-posts', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = (req.user as { _id?: unknown })?._id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const saved = await UserSavedPost.find({ userId }).sort({ createdAt: -1 }).lean();
+  const postIds = saved.map((s) => (s as { postId: unknown }).postId);
+  const posts = await Post.find({ _id: { $in: postIds } }).lean();
+  const postMap = new Map(posts.map((p) => [String((p as { _id: unknown })._id), p]));
+
+  const list = saved
+    .map((s) => {
+      const post = postMap.get(String((s as { postId: unknown }).postId));
+      if (!post) return null;
+      return {
+        id: (post as { _id: unknown })._id,
+        title: (post as { title: string }).title,
+        content: (post as { content: string }).content,
+        postType: (post as { postType?: string }).postType ?? 'story',
+        likeCount: (post as { likeCount?: number }).likeCount ?? 0,
+        commentCount: (post as { commentCount?: number }).commentCount ?? 0,
+        savedAt: (s as { createdAt?: Date }).createdAt,
+      };
+    })
+    .filter(Boolean);
+
+  res.status(200).json({ savedPosts: list });
 });
 
 export const profileRoutes = router;

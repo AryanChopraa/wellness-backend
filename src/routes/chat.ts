@@ -6,8 +6,11 @@ import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { sendError } from '../utils/response';
 import { getVeniceCompletion, type ChatMessage } from '../services/veniceChat';
 import { generateConversationTitle } from '../services/openaiTitle';
-import { buildUserProfile } from '../utils/chatProfile';
+import { buildUserProfile, buildWellnessProfileForChat } from '../utils/chatProfile';
 import { Onboarding } from '../models/Onboarding';
+import { Assessment } from '../models/Assessment';
+import { getWellnessProfile } from '../services/wellnessProfile';
+import { ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE } from '../prompts/chatSystemPrompt';
 
 const router = Router();
 
@@ -148,6 +151,24 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
 
   const convId = new mongoose.Types.ObjectId(conversationId);
 
+  // Crisis detection: if user message suggests self-harm, return fixed response and do not call AI
+  const crisisPattern = /\b(suicide|kill myself|self[- ]harm|end (it|my life)|want to die)\b/i;
+  if (crisisPattern.test(content)) {
+    const crisisMessage = "I'm really concerned about you. Please reach out to a crisis helpline—they're there 24/7. In the US: 988 (Suicide & Crisis Lifeline). I care, but I can't provide emergency support. Please talk to someone who can help right now.";
+    const [userMsg, assistantMsg] = await Promise.all([
+      Message.create({ conversationId: convId, role: 'user', content }),
+      Message.create({ conversationId: convId, role: 'assistant', content: crisisMessage }),
+    ]);
+    await Conversation.updateOne({ _id: conversation._id }, { $set: { updatedAt: new Date() } });
+    res.status(201).json({
+      userMessage: { id: userMsg._id.toString(), role: 'user', content, createdAt: (userMsg as { createdAt?: Date }).createdAt?.toISOString?.() ?? new Date().toISOString() },
+      assistantMessage: { id: assistantMsg._id.toString(), role: 'assistant', content: crisisMessage, createdAt: (assistantMsg as { createdAt?: Date }).createdAt?.toISOString?.() ?? new Date().toISOString() },
+      rateLimitReached: false,
+      crisisRedirect: true,
+    });
+    return;
+  }
+
   // Load history for context (all messages in order)
   const history = await Message.find({ conversationId: convId }).sort({ createdAt: 1 }).lean();
   const apiMessages: ChatMessage[] = history.map((m) => ({
@@ -156,12 +177,23 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
   }));
   apiMessages.push({ role: 'user', content });
 
-  const onboarding = await Onboarding.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
-  const userProfile = buildUserProfile(onboarding as Parameters<typeof buildUserProfile>[0]);
+  // Prefer wellness profile (Assessment) for Ally; fall back to Onboarding for Eva
+  const [assessment, onboarding] = await Promise.all([
+    Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
+    Onboarding.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
+  ]);
+  const wellnessProfile = getWellnessProfile(assessment);
+  const useAlly = !!wellnessProfile;
+  const systemPrompt = useAlly
+    ? ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, buildWellnessProfileForChat(wellnessProfile))
+    : undefined;
+  const userProfile = useAlly ? undefined : buildUserProfile(onboarding as Parameters<typeof buildUserProfile>[0]);
 
   let assistantContent: string;
   try {
-    const result = await getVeniceCompletion({ messages: apiMessages, userProfile });
+    const result = await getVeniceCompletion(
+      systemPrompt ? { messages: apiMessages, systemPrompt } : { messages: apiMessages, userProfile }
+    );
     assistantContent = result.content;
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI service error';

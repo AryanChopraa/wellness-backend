@@ -3,6 +3,8 @@ import mongoose from 'mongoose';
 import { Post } from '../models/Post';
 import { Comment } from '../models/Comment';
 import { PostVote } from '../models/PostVote';
+import { PostReaction } from '../models/PostReaction';
+import { UserSavedPost } from '../models/UserSavedPost';
 import { User } from '../models/User';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 
@@ -48,10 +50,114 @@ router.get('/:id', async (req, res: Response) => {
       likeCount: (post as { likeCount?: number }).likeCount ?? 0,
       commentCount: (post as { commentCount?: number }).commentCount ?? 0,
       shareCount: (post as { shareCount?: number }).shareCount ?? 0,
+      postType: (post as { postType?: string }).postType ?? 'story',
+      tags: (post as { tags?: string[] }).tags ?? [],
+      severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
+      triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       createdAt: (post as { createdAt?: Date }).createdAt,
       updatedAt: (post as { updatedAt?: Date }).updatedAt,
     },
   });
+});
+
+const REACTION_TYPES = ['relate', 'support', 'celebrate', 'helpful'] as const;
+
+/**
+ * POST /posts/:id/reaction — Set reaction (auth required). Body: { type: 'relate'|'support'|'celebrate'|'helpful' }.
+ */
+router.post('/:id/reaction', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = (req.user as { _id?: unknown })?._id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { id: postId } = req.params;
+  const type = (req.body?.type as string)?.toLowerCase();
+  if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  if (!REACTION_TYPES.includes(type as (typeof REACTION_TYPES)[number])) {
+    res.status(400).json({ error: 'type must be one of: relate, support, celebrate, helpful' });
+    return;
+  }
+  const post = await Post.findById(postId);
+  if (!post) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  const reaction = await PostReaction.findOneAndUpdate(
+    { userId, postId: new mongoose.Types.ObjectId(postId) },
+    { $set: { type } },
+    { upsert: true, new: true }
+  ).lean();
+  res.status(200).json({
+    reaction: (reaction as { type: string }).type,
+    message: 'Reaction set',
+  });
+});
+
+/**
+ * DELETE /posts/:id/reaction — Remove your reaction (auth required).
+ */
+router.delete('/:id/reaction', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = (req.user as { _id?: unknown })?._id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { id: postId } = req.params;
+  if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  await PostReaction.deleteOne({ userId, postId: new mongoose.Types.ObjectId(postId) });
+  res.status(200).json({ message: 'Reaction removed' });
+});
+
+/**
+ * POST /posts/:id/save — Save post (auth required).
+ */
+router.post('/:id/save', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = (req.user as { _id?: unknown })?._id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { id: postId } = req.params;
+  if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  const post = await Post.findById(postId);
+  if (!post) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  await UserSavedPost.findOneAndUpdate(
+    { userId, postId: new mongoose.Types.ObjectId(postId) },
+    { $set: { userId, postId: new mongoose.Types.ObjectId(postId) } },
+    { upsert: true }
+  );
+  res.status(200).json({ message: 'Post saved' });
+});
+
+/**
+ * DELETE /posts/:id/save — Unsave post (auth required).
+ */
+router.delete('/:id/save', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = (req.user as { _id?: unknown })?._id;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const { id: postId } = req.params;
+  if (!postId || !mongoose.Types.ObjectId.isValid(postId)) {
+    res.status(404).json({ error: 'Post not found' });
+    return;
+  }
+  await UserSavedPost.deleteOne({ userId, postId: new mongoose.Types.ObjectId(postId) });
+  res.status(200).json({ message: 'Post unsaved' });
 });
 
 /**

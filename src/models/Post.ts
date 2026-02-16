@@ -9,6 +9,18 @@ const PostSchema = new Schema(
     likeCount: { type: Number, default: 0 },
     commentCount: { type: Number, default: 0 },
     shareCount: { type: Number, default: 0 },
+    /** Enhanced workflow: post type for filtering/display */
+    postType: {
+      type: String,
+      enum: ['question', 'story', 'progress_update', 'resource_share', 'seeking_support'],
+      default: 'story',
+    },
+    /** Tags for "For You" feed (match assessment concerns) */
+    tags: { type: [String], default: [] },
+    /** Optional severity level (1-5) for filtering */
+    severityLevel: { type: Number, min: 1, max: 5, default: null },
+    /** Trigger warnings for filtering */
+    triggerWarnings: { type: [String], default: [] },
   },
   { timestamps: true }
 );
@@ -16,5 +28,6 @@ const PostSchema = new Schema(
 PostSchema.index({ communityId: 1, createdAt: -1 });
 PostSchema.index({ communityId: 1, likeCount: -1 });
 PostSchema.index({ communityId: 1, commentCount: -1 });
+PostSchema.index({ tags: 1 });
 
 export const Post = mongoose.model('Post', PostSchema);

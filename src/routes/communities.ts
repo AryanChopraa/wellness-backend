@@ -3,7 +3,9 @@ import mongoose from 'mongoose';
 import { Community } from '../models/Community';
 import { Post } from '../models/Post';
 import { User } from '../models/User';
+import { Assessment } from '../models/Assessment';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { getWellnessProfile } from '../services/wellnessProfile';
 
 const router = Router();
 
@@ -228,6 +230,10 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       likeCount: (p as { likeCount?: number }).likeCount ?? 0,
       commentCount: (p as { commentCount?: number }).commentCount ?? 0,
       shareCount: (p as { shareCount?: number }).shareCount ?? 0,
+      postType: (p as { postType?: string }).postType ?? 'story',
+      tags: (p as { tags?: string[] }).tags ?? [],
+      severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
+      triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       createdAt: (p as { createdAt?: Date }).createdAt,
       updatedAt: (p as { updatedAt?: Date }).updatedAt,
     };
@@ -265,9 +271,20 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     return;
   }
 
-  const body = (req.body ?? {}) as { title?: string; content?: string };
+  const body = (req.body ?? {}) as {
+    title?: string;
+    content?: string;
+    postType?: 'question' | 'story' | 'progress_update' | 'resource_share' | 'seeking_support';
+    tags?: string[];
+    severityLevel?: number;
+    triggerWarnings?: string[];
+  };
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const content = typeof body.content === 'string' ? body.content.trim() : '';
+  const postType = body.postType && ['question', 'story', 'progress_update', 'resource_share', 'seeking_support'].includes(body.postType) ? body.postType : 'story';
+  const tags = Array.isArray(body.tags) ? body.tags.filter((t) => typeof t === 'string').slice(0, 10) : [];
+  const severityLevel = typeof body.severityLevel === 'number' && body.severityLevel >= 1 && body.severityLevel <= 5 ? body.severityLevel : null;
+  const triggerWarnings = Array.isArray(body.triggerWarnings) ? body.triggerWarnings.filter((t) => typeof t === 'string').slice(0, 5) : [];
 
   if (!title || title.length < 1) {
     res.status(400).json({ error: 'title is required and must be non-empty' });
@@ -283,6 +300,10 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     authorId: (user as { _id?: unknown })._id,
     title,
     content,
+    postType,
+    tags,
+    severityLevel,
+    triggerWarnings,
   });
 
   const author = await User.findById((user as { _id?: unknown })._id)
@@ -309,9 +330,90 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
       likeCount: 0,
       commentCount: 0,
       shareCount: 0,
+      postType: (post as { postType?: string }).postType ?? 'story',
+      tags: (post as { tags?: string[] }).tags ?? [],
+      severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
+      triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
     },
+  });
+});
+
+/**
+ * GET /communities/:idOrSlug/feed/for-you — Personalized feed by assessment tags (auth required).
+ */
+router.get('/:idOrSlug/feed/for-you', requireAuth, async (req: AuthRequest, res: Response) => {
+  await ensureDefaultCommunity();
+  const userId = req.userId!;
+  const { idOrSlug } = req.params;
+  const isId = mongoose.Types.ObjectId.isValid(idOrSlug) && String(new mongoose.Types.ObjectId(idOrSlug)) === idOrSlug;
+  const community = isId
+    ? await Community.findById(idOrSlug)
+    : await Community.findOne({ slug: idOrSlug.toLowerCase() });
+  if (!community) {
+    res.status(404).json({ error: 'Community not found' });
+    return;
+  }
+  const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+  const profile = getWellnessProfile(assessment);
+  const tags = profile?.concerns?.length ? profile.concerns : [];
+
+  const page = Math.max(1, parseInt(String(req.query.page), 10) || DEFAULT_PAGE);
+  const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(String(req.query.limit), 10) || DEFAULT_LIMIT));
+  const skip = (page - 1) * limit;
+
+  const match: Record<string, unknown> = { communityId: community._id };
+  if (tags.length > 0) {
+    (match as { tags?: { $in: string[] } }).tags = { $in: tags };
+  }
+
+  const [posts, total] = await Promise.all([
+    Post.find(match).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    Post.countDocuments(match),
+  ]);
+
+  const authorIds = [...new Set(posts.map((p) => String((p as { authorId: unknown }).authorId)))];
+  const authors = await User.find({ _id: { $in: authorIds } })
+    .select('username avatarUrl preferences.anonymousInCommunity')
+    .lean();
+  const authorMap = new Map(
+    authors.map((a) => [
+      String((a as { _id: unknown })._id),
+      {
+        id: (a as { _id: unknown })._id,
+        username: (a as { username?: string }).username,
+        avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
+        anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
+      },
+    ])
+  );
+
+  const postsWithAuthors = posts.map((p) => {
+    const author = authorMap.get(String((p as { authorId: unknown }).authorId));
+    const showAnonymous = author?.anonymousInCommunity === true;
+    return {
+      id: (p as { _id: unknown })._id,
+      communityId: (p as { communityId: unknown }).communityId,
+      authorId: (p as { authorId: unknown }).authorId,
+      author: author ? { id: author.id, username: showAnonymous ? 'Anonymous' : author.username, avatarUrl: showAnonymous ? null : author.avatarUrl } : null,
+      title: (p as { title: string }).title,
+      content: (p as { content: string }).content,
+      likeCount: (p as { likeCount?: number }).likeCount ?? 0,
+      commentCount: (p as { commentCount?: number }).commentCount ?? 0,
+      shareCount: (p as { shareCount?: number }).shareCount ?? 0,
+      postType: (p as { postType?: string }).postType ?? 'story',
+      tags: (p as { tags?: string[] }).tags ?? [],
+      severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
+      triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
+      createdAt: (p as { createdAt?: Date }).createdAt,
+      updatedAt: (p as { updatedAt?: Date }).updatedAt,
+    };
+  });
+
+  res.status(200).json({
+    posts: postsWithAuthors,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
 });
 
