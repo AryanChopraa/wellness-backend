@@ -2,6 +2,8 @@ import type { WellnessProfile } from '../types/assessment';
 
 /** Lean assessment or document with required fields */
 export interface AssessmentLike {
+  age?: number;
+  gender?: string;
   concerns: string[];
   urgencyScore: number;
   severityScore: number;
@@ -21,6 +23,8 @@ export function getWellnessProfile(assessment: AssessmentLike | null): WellnessP
   if (!assessment) return null;
 
   const a = assessment as {
+    age?: number;
+    gender?: string;
     concerns: string[];
     urgencyScore: number;
     severityScore: number;
@@ -34,6 +38,8 @@ export function getWellnessProfile(assessment: AssessmentLike | null): WellnessP
   };
 
   return {
+    age: a.age,
+    gender: a.gender as WellnessProfile['gender'],
     concerns: a.concerns as WellnessProfile['concerns'],
     urgencyScore: a.urgencyScore,
     severityScore: a.severityScore,

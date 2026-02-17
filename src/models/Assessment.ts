@@ -4,6 +4,9 @@ import type { AssessmentSubmitBody } from '../types/assessment';
 const AssessmentSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true, index: true },
+    // Demographics (collected with assessment)
+    age: { type: Number, required: true, min: 18 },
+    gender: { type: String, required: true, enum: ['male', 'female', 'non-binary', 'prefer-not-to-say'] },
     // Q1: 1-3 concerns
     concerns: {
       type: [String],
@@ -68,6 +71,8 @@ AssessmentSchema.index({ userId: 1 });
 
 export interface AssessmentDoc extends mongoose.Document {
   userId: mongoose.Types.ObjectId;
+  age: number;
+  gender: string;
   concerns: string[];
   duration: string;
   urgencyScore: number;

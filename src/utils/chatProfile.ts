@@ -1,6 +1,6 @@
 /**
- * Build a short user profile string from onboarding (and optionally user) for the chat AI.
- * Used to personalize Venice chat system prompt. Omits "prefer-not-to-say" and missing fields.
+ * Build a short user profile string from legacy profile (old questionnaire) for the chat AI.
+ * Used when user has no Assessment; omits "prefer-not-to-say" and missing fields.
  */
 export interface OnboardingForProfile {
   age?: number;

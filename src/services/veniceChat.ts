@@ -12,7 +12,7 @@ export interface VeniceChatOptions {
   messages: ChatMessage[];
   /** When set, used as the full system prompt (e.g. Ally with wellness profile). Otherwise template + userProfile. */
   systemPrompt?: string;
-  /** User profile string (from onboarding or wellness assessment) for personalization. Used when systemPrompt is not set. */
+  /** User profile string (from legacy profile or wellness assessment) for personalization. Used when systemPrompt is not set. */
   userProfile?: string;
 }
 

@@ -102,8 +102,16 @@ export const PREFERRED_TIME_OPTIONS = [
 ] as const;
 export type PreferredTimeOption = (typeof PREFERRED_TIME_OPTIONS)[number];
 
-/** Request body for POST /assessment */
+/** Demographics (collected with assessment) */
+export const GENDER_OPTIONS = ['male', 'female', 'non-binary', 'prefer-not-to-say'] as const;
+export type GenderOption = (typeof GENDER_OPTIONS)[number];
+
+/** Request body for POST /assessment — demographics + 10 assessment questions */
 export interface AssessmentSubmitBody {
+  /** Required: username, age, gender */
+  username: string;
+  age: number;
+  gender: GenderOption;
   /** Q1: 1–3 concern tags */
   concerns: ConcernTag[];
   /** Q2 */
@@ -128,6 +136,8 @@ export interface AssessmentSubmitBody {
 
 /** Computed wellness profile returned for results page, Ally, recommendations */
 export interface WellnessProfile {
+  age?: number;
+  gender?: GenderOption;
   concerns: ConcernTag[];
   urgencyScore: number;       // 1–4 from Q2
   severityScore: number;       // 1–5 from Q3

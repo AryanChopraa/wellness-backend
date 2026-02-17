@@ -3,9 +3,11 @@ import mongoose from 'mongoose';
 import { Community } from '../models/Community';
 import { Post } from '../models/Post';
 import { User } from '../models/User';
+import { Asset } from '../models/Asset';
 import { Assessment } from '../models/Assessment';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { getWellnessProfile } from '../services/wellnessProfile';
+import { getDefaultAvatarUrl } from '../utils/defaultAvatar';
 
 const router = Router();
 
@@ -194,26 +196,38 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
   }
 
   const authorIds = [...new Set(posts.map((p) => String((p as { authorId: unknown }).authorId)))];
-  const authors = await User.find({ _id: { $in: authorIds } })
-    .select('username avatarUrl preferences.anonymousInCommunity')
-    .lean();
+  const allAssetIds = posts.flatMap((p) => (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? []);
+  const uniqueAssetIds = [...new Set(allAssetIds.map((id) => String(id)))];
+
+  const [authors, assetDocs] = await Promise.all([
+    User.find({ _id: { $in: authorIds } }).select('username avatarUrl preferences.anonymousInCommunity').lean(),
+    uniqueAssetIds.length > 0 ? Asset.find({ _id: { $in: uniqueAssetIds.map((id) => new mongoose.Types.ObjectId(id)) } }).select('_id url').lean() : [],
+  ]);
+
+  const assetUrlMap = new Map(assetDocs.map((a) => [String((a as { _id: unknown })._id), (a as { url: string }).url]));
 
   const authorMap = new Map(
-    authors.map((a) => [
-      String((a as { _id: unknown })._id),
-      {
-        id: (a as { _id: unknown })._id,
-        username: (a as { username?: string }).username,
-        avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
-        anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
-      },
-    ])
+    authors.map((a) => {
+      const id = String((a as { _id: unknown })._id);
+      const avatarUrl = (a as { avatarUrl?: string }).avatarUrl ?? getDefaultAvatarUrl(id);
+      return [
+        id,
+        {
+          id: (a as { _id: unknown })._id,
+          username: (a as { username?: string }).username,
+          avatarUrl,
+          anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
+        },
+      ];
+    })
   );
 
   const postsWithAuthors = posts.map((p) => {
     const authorId = String((p as { authorId: unknown }).authorId);
     const author = authorMap.get(authorId);
     const showAnonymous = author?.anonymousInCommunity === true;
+    const postAssetIds = (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? [];
+    const assets = postAssetIds.map((aid) => ({ id: aid, url: assetUrlMap.get(String(aid)) })).filter((a) => a.url) as { id: mongoose.Types.ObjectId; url: string }[];
     return {
       id: (p as { _id: unknown })._id,
       communityId: (p as { communityId: unknown }).communityId,
@@ -234,6 +248,7 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       tags: (p as { tags?: string[] }).tags ?? [],
       severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
       triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
+      assets,
       createdAt: (p as { createdAt?: Date }).createdAt,
       updatedAt: (p as { updatedAt?: Date }).updatedAt,
     };
@@ -278,6 +293,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     tags?: string[];
     severityLevel?: number;
     triggerWarnings?: string[];
+    assetIds?: string[];
   };
   const title = typeof body.title === 'string' ? body.title.trim() : '';
   const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -285,6 +301,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
   const tags = Array.isArray(body.tags) ? body.tags.filter((t) => typeof t === 'string').slice(0, 10) : [];
   const severityLevel = typeof body.severityLevel === 'number' && body.severityLevel >= 1 && body.severityLevel <= 5 ? body.severityLevel : null;
   const triggerWarnings = Array.isArray(body.triggerWarnings) ? body.triggerWarnings.filter((t) => typeof t === 'string').slice(0, 5) : [];
+  const rawAssetIds = Array.isArray(body.assetIds) ? body.assetIds.filter((id) => typeof id === 'string' && mongoose.Types.ObjectId.isValid(id)) : [];
 
   if (!title || title.length < 1) {
     res.status(400).json({ error: 'title is required and must be non-empty' });
@@ -293,6 +310,20 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
   if (!content || content.length < 1) {
     res.status(400).json({ error: 'content is required and must be non-empty' });
     return;
+  }
+
+  const uid = new mongoose.Types.ObjectId(String((user as { _id?: unknown })._id));
+  let assetIds: mongoose.Types.ObjectId[] = [];
+  if (rawAssetIds.length > 0) {
+    const assets = await Asset.find({
+      _id: { $in: rawAssetIds.map((id) => new mongoose.Types.ObjectId(id)) },
+      userId: uid,
+    }).select('_id url').lean();
+    if (assets.length !== rawAssetIds.length) {
+      res.status(400).json({ error: 'One or more assetIds not found or not owned by you. Upload via POST /assets first, then use returned id.' });
+      return;
+    }
+    assetIds = assets.map((a) => (a as { _id: mongoose.Types.ObjectId })._id);
   }
 
   const post = await Post.create({
@@ -304,13 +335,23 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     tags,
     severityLevel,
     triggerWarnings,
+    assetIds,
   });
 
   const author = await User.findById((user as { _id?: unknown })._id)
     .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
-
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
+  const authorAvatarUrl = (author as { avatarUrl?: string })?.avatarUrl ?? getDefaultAvatarUrl(String((user as { _id?: unknown })._id));
+
+  const postAssetIds = (post as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? [];
+  const postAssets = postAssetIds.length > 0
+    ? await Asset.find({ _id: { $in: postAssetIds } }).select('_id url').lean()
+    : [];
+  const assetsForPost = postAssetIds.map((aid) => {
+    const a = postAssets.find((x) => String((x as { _id: unknown })._id) === String(aid));
+    return a ? { id: (a as { _id: unknown })._id, url: (a as { url: string }).url } : null;
+  }).filter(Boolean) as { id: unknown; url: string }[];
 
   res.status(201).json({
     message: 'Post created',
@@ -322,7 +363,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
         ? {
             id: (author as { _id: unknown })._id,
             username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
+            avatarUrl: showAnonymous ? null : authorAvatarUrl,
           }
         : null,
       title: post.title,
@@ -334,6 +375,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
       tags: (post as { tags?: string[] }).tags ?? [],
       severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
       triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
+      assets: assetsForPost,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
     },
@@ -374,24 +416,35 @@ router.get('/:idOrSlug/feed/for-you', requireAuth, async (req: AuthRequest, res:
   ]);
 
   const authorIds = [...new Set(posts.map((p) => String((p as { authorId: unknown }).authorId)))];
-  const authors = await User.find({ _id: { $in: authorIds } })
-    .select('username avatarUrl preferences.anonymousInCommunity')
-    .lean();
-  const authorMap = new Map(
-    authors.map((a) => [
-      String((a as { _id: unknown })._id),
-      {
-        id: (a as { _id: unknown })._id,
-        username: (a as { username?: string }).username,
-        avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
-        anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
-      },
-    ])
+  const allAssetIdsForYou = posts.flatMap((p) => (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? []);
+  const uniqueAssetIdsForYou = [...new Set(allAssetIdsForYou.map((id) => String(id)))];
+
+  const [authorsForYou, assetDocsForYou] = await Promise.all([
+    User.find({ _id: { $in: authorIds } }).select('username avatarUrl preferences.anonymousInCommunity').lean(),
+    uniqueAssetIdsForYou.length > 0 ? Asset.find({ _id: { $in: uniqueAssetIdsForYou.map((id) => new mongoose.Types.ObjectId(id)) } }).select('_id url').lean() : [],
+  ]);
+  const assetUrlMapForYou = new Map(assetDocsForYou.map((a) => [String((a as { _id: unknown })._id), (a as { url: string }).url]));
+  const authorMapForYou = new Map(
+    authorsForYou.map((a) => {
+      const id = String((a as { _id: unknown })._id);
+      const avatarUrl = (a as { avatarUrl?: string }).avatarUrl ?? getDefaultAvatarUrl(id);
+      return [
+        id,
+        {
+          id: (a as { _id: unknown })._id,
+          username: (a as { username?: string }).username,
+          avatarUrl,
+          anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
+        },
+      ];
+    })
   );
 
-  const postsWithAuthors = posts.map((p) => {
-    const author = authorMap.get(String((p as { authorId: unknown }).authorId));
+  const postsWithAuthorsForYou = posts.map((p) => {
+    const author = authorMapForYou.get(String((p as { authorId: unknown }).authorId));
     const showAnonymous = author?.anonymousInCommunity === true;
+    const postAssetIds = (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? [];
+    const assets = postAssetIds.map((aid) => ({ id: aid, url: assetUrlMapForYou.get(String(aid)) })).filter((a) => a.url) as { id: mongoose.Types.ObjectId; url: string }[];
     return {
       id: (p as { _id: unknown })._id,
       communityId: (p as { communityId: unknown }).communityId,
@@ -406,13 +459,14 @@ router.get('/:idOrSlug/feed/for-you', requireAuth, async (req: AuthRequest, res:
       tags: (p as { tags?: string[] }).tags ?? [],
       severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
       triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
+      assets,
       createdAt: (p as { createdAt?: Date }).createdAt,
       updatedAt: (p as { updatedAt?: Date }).updatedAt,
     };
   });
 
   res.status(200).json({
-    posts: postsWithAuthors,
+    posts: postsWithAuthorsForYou,
     pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
   });
 });

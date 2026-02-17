@@ -39,6 +39,15 @@ const PRIMARY_FEAR_SET = new Set<string>([
 ]);
 const LEARNING_STYLE_SET = new Set<string>(['videos', 'reading', 'interactive', 'talking', 'mix']);
 const PREFERRED_TIME_SET = new Set<string>(['morning', 'midday', 'afternoon', 'evening', 'night', 'varies']);
+const GENDER_OPTIONS_SET = new Set<string>(['male', 'female', 'non-binary', 'prefer-not-to-say']);
+const MIN_AGE = 18;
+const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
+
+function isValidUsername(username: unknown): boolean {
+  if (typeof username !== 'string') return false;
+  const s = (username as string).trim().toLowerCase();
+  return s.length >= 3 && s.length <= 30 && USERNAME_REGEX.test(s);
+}
 
 function validateConcerns(arr: unknown): arr is ConcernTag[] {
   return Array.isArray(arr) && arr.length >= 1 && arr.length <= 3 && arr.every((c) => typeof c === 'string' && CONCERN_TAGS_SET.has(c));
@@ -48,12 +57,34 @@ function validateGoals(arr: unknown): arr is GoalTag[] {
 }
 
 /**
- * POST /assessment — Submit 10-question wellness assessment (auth required).
- * Creates or replaces assessment for current user. Sets user.hasOnboarded if not already.
+ * POST /assessment — Submit demographics (username, age, gender) + 10-question wellness assessment (auth required).
+ * Creates or replaces assessment. Updates User with username, age, and sets hasOnboarded.
  */
 router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const body = (req.body ?? {}) as Partial<AssessmentSubmitBody>;
+
+  if (!body.username || !isValidUsername(body.username)) {
+    res.status(400).json({ error: 'username is required: 3–30 characters, only letters, numbers, and underscore' });
+    return;
+  }
+  const usernameLower = (body.username as string).trim().toLowerCase();
+  const existingByUsername = await User.findOne({ username: usernameLower, _id: { $ne: userId } });
+  if (existingByUsername) {
+    res.status(400).json({ error: 'This username is already taken' });
+    return;
+  }
+
+  const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age), 10);
+  if (!Number.isFinite(age) || age < MIN_AGE) {
+    res.status(400).json({ error: `age is required and must be at least ${MIN_AGE}` });
+    return;
+  }
+
+  if (!body.gender || !GENDER_OPTIONS_SET.has(body.gender)) {
+    res.status(400).json({ error: 'gender is required and must be one of: male, female, non-binary, prefer-not-to-say' });
+    return;
+  }
 
   if (!validateConcerns(body.concerns)) {
     res.status(400).json({ error: 'concerns is required: array of 1-3 valid concern tags' });
@@ -102,6 +133,8 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 
   const payload = {
     userId: new mongoose.Types.ObjectId(userId),
+    age,
+    gender: body.gender!,
     concerns: body.concerns!,
     duration: body.duration!,
     urgencyScore,
@@ -122,13 +155,16 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
     { upsert: true, new: true }
   ).lean();
 
-  await User.findByIdAndUpdate(userId, { $set: { hasOnboarded: true } });
+  await User.findByIdAndUpdate(userId, { $set: { hasOnboarded: true, username: usernameLower, age } });
 
   const profile = getWellnessProfile(assessment);
   res.status(200).json({
     message: 'Assessment saved',
     assessment: {
       id: (assessment as { _id: unknown })._id,
+      username: usernameLower,
+      age: (assessment as { age: number }).age,
+      gender: (assessment as { gender: string }).gender,
       concerns: (assessment as { concerns: string[] }).concerns,
       urgencyScore: (assessment as { urgencyScore: number }).urgencyScore,
       severityScore: (assessment as { severityScore: number }).severityScore,
@@ -148,7 +184,10 @@ router.post('/', requireAuth, async (req: AuthRequest, res: Response) => {
 /** GET /assessment — Get current user's assessment (auth required). */
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
-  const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+  const [assessment, user] = await Promise.all([
+    Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
+    User.findById(userId).select('username').lean(),
+  ]);
   if (!assessment) {
     res.status(200).json({ assessment: null, wellnessProfile: null });
     return;
@@ -157,6 +196,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   res.status(200).json({
     assessment: {
       id: (assessment as { _id: unknown })._id,
+      username: (user as { username?: string } | null)?.username ?? null,
+      age: (assessment as { age: number }).age,
+      gender: (assessment as { gender: string }).gender,
       concerns: (assessment as { concerns: string[] }).concerns,
       urgencyScore: (assessment as { urgencyScore: number }).urgencyScore,
       severityScore: (assessment as { severityScore: number }).severityScore,
@@ -173,7 +215,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   });
 });
 
-/** GET /assessment/wellness-profile — Get computed wellness profile for results page / personalization (auth required). */
+/** GET /assessment/wellness-profile — Get computed wellness profile (includes age, gender) for results page / personalization (auth required). */
 router.get('/wellness-profile', requireAuth, async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();

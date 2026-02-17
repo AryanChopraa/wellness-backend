@@ -6,7 +6,9 @@ import { PostVote } from '../models/PostVote';
 import { PostReaction } from '../models/PostReaction';
 import { UserSavedPost } from '../models/UserSavedPost';
 import { User } from '../models/User';
+import { Asset } from '../models/Asset';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { getDefaultAvatarUrl } from '../utils/defaultAvatar';
 
 const router = Router();
 const DEFAULT_PAGE = 1;
@@ -27,10 +29,18 @@ router.get('/:id', async (req, res: Response) => {
     res.status(404).json({ error: 'Post not found' });
     return;
   }
-  const author = await User.findById((post as { authorId: unknown }).authorId)
-    .select('username avatarUrl preferences.anonymousInCommunity')
-    .lean();
+  const postAssetIds = (post as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? [];
+  const [author, assetDocs] = await Promise.all([
+    User.findById((post as { authorId: unknown }).authorId).select('username avatarUrl preferences.anonymousInCommunity').lean(),
+    postAssetIds.length > 0 ? Asset.find({ _id: { $in: postAssetIds } }).select('_id url').lean() : [],
+  ]);
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
+  const authorIdStr = author ? String((author as { _id: unknown })._id) : '';
+  const authorAvatarUrl = (author as { avatarUrl?: string })?.avatarUrl ?? getDefaultAvatarUrl(authorIdStr);
+  const assets = postAssetIds.map((aid) => {
+    const a = assetDocs.find((x) => String((x as { _id: unknown })._id) === String(aid));
+    return a ? { id: (a as { _id: unknown })._id, url: (a as { url: string }).url } : null;
+  }).filter(Boolean) as { id: unknown; url: string }[];
 
   res.status(200).json({
     message: 'OK',
@@ -42,7 +52,7 @@ router.get('/:id', async (req, res: Response) => {
         ? {
             id: (author as { _id: unknown })._id,
             username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
+            avatarUrl: showAnonymous ? null : authorAvatarUrl,
           }
         : null,
       title: (post as { title: string }).title,
@@ -54,6 +64,7 @@ router.get('/:id', async (req, res: Response) => {
       tags: (post as { tags?: string[] }).tags ?? [],
       severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
       triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
+      assets,
       createdAt: (post as { createdAt?: Date }).createdAt,
       updatedAt: (post as { updatedAt?: Date }).updatedAt,
     },
@@ -231,15 +242,19 @@ router.get('/:id/comments', async (req, res: Response) => {
     .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
   const authorMap = new Map(
-    authors.map((a) => [
-      String((a as { _id: unknown })._id),
-      {
-        id: (a as { _id: unknown })._id,
-        username: (a as { username?: string }).username,
-        avatarUrl: (a as { avatarUrl?: string }).avatarUrl,
-        anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
-      },
-    ])
+    authors.map((a) => {
+      const id = String((a as { _id: unknown })._id);
+      const avatarUrl = (a as { avatarUrl?: string }).avatarUrl ?? getDefaultAvatarUrl(id);
+      return [
+        id,
+        {
+          id: (a as { _id: unknown })._id,
+          username: (a as { username?: string }).username,
+          avatarUrl,
+          anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
+        },
+      ];
+    })
   );
 
   const commentsWithAuthors = comments.map((c) => {
@@ -338,6 +353,7 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
     .select('username avatarUrl preferences.anonymousInCommunity')
     .lean();
   const showAnonymous = (author as { preferences?: { anonymousInCommunity?: boolean } })?.preferences?.anonymousInCommunity === true;
+  const commentAuthorAvatar = author ? ((author as { avatarUrl?: string }).avatarUrl ?? getDefaultAvatarUrl(String((author as { _id: unknown })._id))) : null;
 
   res.status(201).json({
     message: 'Comment added',
@@ -349,7 +365,7 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
         ? {
             id: (author as { _id: unknown })._id,
             username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : (author as { avatarUrl?: string }).avatarUrl,
+            avatarUrl: showAnonymous ? null : commentAuthorAvatar,
           }
         : null,
       parentId: comment.parentId,

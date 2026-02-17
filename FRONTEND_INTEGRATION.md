@@ -34,7 +34,7 @@ Some features **require seeded data** or they will return empty results:
 | Data | Used by | Needed for |
 |------|--------|------------|
 | **Exercises** | `GET /assessment/plan`, `GET /exercises`, dashboard “Today’s exercise” | 7-day plan and exercise library must have documents with `tags`, `goalTags`, `severityLevels` matching assessment values. |
-| **Videos** | `GET /videos`, `GET /videos?recommended=true` | Video library and “Recommended for you” need `Video` documents (can use `source: 'youtube'` + `externalId` for sample vlogs). |
+| **Videos** | `GET /videos`, `GET /videos?recommended=true` | Video library and “Recommended for you” need `Video` documents (asset-only; run seed to create reel assets + videos). Use `GET /videos?reels=true` for reel feed. |
 | **Communities** | `GET /communities` (topic boards) | Seed creates topic-board communities (Performance & Confidence, Communication & Relationships, etc.). |
 
 **Run the wellness seed (backend):**
@@ -44,14 +44,14 @@ cd backend
 npm run seed:wellness
 ```
 
-- Inserts **~18 sample exercises** (journaling, breathing, communication, body confidence, sexual health, grounding, etc.) and **~12 sample videos** (YouTube placeholders covering all primary fears and tags).
+- Inserts **~18 sample exercises** and **~40 reel videos** (asset-only short-form; seed creates a seed user and Asset docs with placeholder URLs, then Video docs).
 - Creates **topic-board communities** if missing: General, Performance & Confidence, Communication & Relationships, Body Image & Self-Love, Sexual Health Q&A, Wins & Progress, Managing Anxiety.
 - Idempotent: if exercises/videos already exist, it skips insert unless you pass `--reset`.
-- Options: `--skip-exercises`, `--skip-videos`, `--skip-communities`, `--reset` (deletes existing exercises/videos before inserting; communities and posts are never deleted).
+- Options: `--skip-exercises`, `--skip-videos`, `--skip-communities`, `--reset` (deletes existing exercises/videos and seed reel assets; communities and posts are never deleted).
 
 **Optional sample posts:** Set env `SEED_USER_ID` to a valid user MongoDB ObjectId. The seed will create a few sample posts in the "general" community so the feed has content.
 
-**Optional:** Replace the placeholder YouTube `externalId` values in the seed script with real wellness vlog IDs, or add more exercises/videos via an admin flow.
+**Optional:** Set `SEED_REEL_BASE_URL` to your storage base URL for reel assets; upload real MP4s to match paths. Add more videos via asset upload + Video creation.
 
 ---
 
@@ -59,20 +59,25 @@ npm run seed:wellness
 
 Use these types for request bodies and response parsing.
 
-### 3.1 Assessment (10-question wellness questionnaire)
+### 3.1 Assessment (demographics + 10 questions)
 
-**POST body — submit assessment**
+**First-time flow is the assessment only:** collect **username**, **age**, **gender** plus the 10 assessment questions; submit in one request to POST /assessment.
+
+**POST body — submit assessment (required: username, age, gender + 10 questions)**
 
 ```ts
 interface AssessmentSubmitBody {
-  concerns: string[];           // 1–3 items; see CONCERN_TAGS
-  duration: string;             // 'recently' | 'few_months' | 'over_a_year' | 'years'
-  severity: string;             // 'occasionally' | 'think_regularly' | 'affecting_confidence' | 'impacting_relationships' | 'avoiding_situations'
+  username: string;             // 3–30 chars, letters/numbers/underscore only
+  age: number;                   // required, min 18
+  gender: string;                // 'male' | 'female' | 'non-binary' | 'prefer-not-to-say'
+  concerns: string[];            // 1–3 items; see CONCERN_TAGS
+  duration: string;              // 'recently' | 'few_months' | 'over_a_year' | 'years'
+  severity: string;              // 'occasionally' | 'think_regularly' | ...
   relationshipStatus: string;   // 'yes_they_know' | 'yes_havent_shared' | 'no_single' | 'complicated'
-  goals: string[];              // 1–3 items; see GOAL_TAGS
+  goals: string[];               // 1–3 items; see GOAL_TAGS
   supportHistory: string;       // 'yes_therapist' | 'yes_friends_family' | 'no_first_time' | 'tried_not_helpful'
   stressLevel: number;          // 1–10
-  primaryFear: string;          // 'never_get_better' | 'broken_abnormal' | 'partner_will_leave' | 'never_confident' | 'alone_in_this' | 'all_in_my_head'
+  primaryFear: string;          // 'never_get_better' | 'broken_abnormal' | ...
   learningStyle: string;        // 'videos' | 'reading' | 'interactive' | 'talking' | 'mix'
   preferredTime: string;        // 'morning' | 'midday' | 'afternoon' | 'evening' | 'night' | 'varies'
 }
@@ -84,9 +89,12 @@ interface AssessmentSubmitBody {
 interface AssessmentResponse {
   assessment: {
     id: string;
+    username: string | null;     // from User (POST response has the submitted value)
+    age: number;
+    gender: string;
     concerns: string[];
-    urgencyScore: number;       // 1–4
-    severityScore: number;      // 1–5
+    urgencyScore: number;        // 1–4
+    severityScore: number;       // 1–5
     relationshipStatus: string;
     goals: string[];
     supportHistory: string;
@@ -100,6 +108,8 @@ interface AssessmentResponse {
 }
 
 interface WellnessProfile {
+  age?: number;
+  gender?: string;
   concerns: string[];
   urgencyScore: number;
   severityScore: number;
@@ -198,6 +208,8 @@ interface DashboardResponse {
     latestCheckIn: { weekNumber: number; goalProximityPercent: number | null; feeling: string | null; whatHelped: string[]; createdAt: string } | null;
   };
   wellnessProfile: {
+    age?: number;
+    gender?: string;
     concerns: string[];
     goals: string[];
     learningStyle: string;
@@ -230,38 +242,39 @@ interface ProgressSubmitBody {
 
 ```ts
 interface CheckInSubmitBody {
-  weekNumber: number;           // 1–52, required
+  weekNumber?: number;          // optional; backend infers current week if omitted (simple yes/no to advance)
   goalProximityPercent?: number; // 0–100
   feeling?: 'much_better' | 'somewhat_better' | 'same' | 'struggling_more';
-  whatHelped?: string[];       // ['daily_exercises','chatbot','community','videos','having_plan']
-  noteForAlly?: string;        // max 1000 chars
+  whatHelped?: string[];        // ['daily_exercises','chatbot','community','videos','having_plan']
+  noteForAlly?: string;         // max 1000 chars
 }
 ```
 
-### 3.5 Videos
+### 3.5 Videos (asset-only, reel-style)
+
+**GET /videos** — Query: `tags` (comma), `limit`, `recommended=true` (when logged in), **`reels=true`** (only short-form reels).
 
 **GET /videos and GET /videos/:id — video item**
 
-```ts
-type VideoSource = 'youtube' | 'vimeo' | 'url' | 'asset';
+Videos are **asset-only**; playback URL comes from storage. Use `playUrl` for `<video src>` or a reel-style player.
 
+```ts
 interface VideoItem {
   id: string;
   title: string;
   description: string;
-  duration: string;           // e.g. "8:32"
+  duration: string;             // e.g. "0:45"
+  durationSeconds: number | null;
   thumbnailUrl: string;
-  source: VideoSource;
-  externalId: string | null;  // YouTube/Vimeo video ID when source is youtube/vimeo
-  videoUrl: string | null;     // direct URL when source is url
-  assetId: string | null;     // when source is asset
-  playUrl: string | null;      // ready-to-use URL for embed/play (use this for playback)
+  format: 'reel' | 'standard';   // reel = short-form vertical
+  assetId: string | null;
+  playUrl: string | null;       // use for playback
   tags: string[];
   viewCount: number;
 }
 ```
 
-- **Playback:** Prefer `playUrl` for iframe or `<video src>`. For YouTube/Vimeo you can also build embed from `source` + `externalId` if needed.
+- **Playback:** Use `playUrl` for `<video src>` or reel-style vertical player. All videos are short-form assets (reels).
 
 ### 3.6 Posts (community)
 
@@ -370,7 +383,7 @@ interface CrisisResponse {
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/assessment` | Yes | Submit 10-question assessment. Body: `AssessmentSubmitBody`. Returns assessment + wellnessProfile. |
+| POST | `/assessment` | Yes | Submit demographics (username, age, gender) + 10 questions. Body: `AssessmentSubmitBody`. Returns assessment + wellnessProfile. |
 | GET | `/assessment` | Yes | Get current user's assessment + wellnessProfile. `assessment` null if not done. |
 | GET | `/assessment/wellness-profile` | Yes | Get computed wellness profile only. 404 if no assessment. |
 | GET | `/assessment/plan` | Yes | Get personalized 7-day plan. 404 if no assessment. |
@@ -385,15 +398,16 @@ interface CrisisResponse {
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/progress` | Yes | Streak, completed days, plan, today's exercise, latest check-in. |
+| GET | `/progress` | Yes | Streak, completed days, plan, today's exercise, memberSince, currentWeekNumber, suggestCheckIn, latest check-in. |
+| GET | `/progress/dashboard` | Yes | **Home feed in one call:** progress, wellnessProfile, recommendedContent. |
 | POST | `/progress` | Yes | Record exercise completion. Body: `exerciseId`, `dayNumber`, optional `moodRating` (1–5). |
-| POST | `/progress/check-in` | Yes | Weekly check-in. Body: `CheckInSubmitBody`. |
+| POST | `/progress/check-in` | Yes | Weekly check-in. Body: `CheckInSubmitBody`; use `currentWeekNumber` from GET /progress or dashboard. |
 
 ### 4.4 Videos
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/videos` | Optional | List videos. Query: `recommended=true` (personalized when logged in), `tags` (comma), `limit`. |
+| GET | `/videos` | Optional | List videos (asset-only). Query: `recommended=true`, `reels=true` (short-form only), `tags` (comma), `limit`. |
 | GET | `/videos/:id` | No | Single video by id. |
 
 ### 4.5 Communities and posts
@@ -419,9 +433,9 @@ interface CrisisResponse {
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/profile` | Yes | User + onboarding (unchanged). |
+| GET | `/profile` | Yes | User + legacy profile record if any (unchanged). |
 | PATCH | `/profile` | Yes | Update username, age, avatarUrl (unchanged). |
-| PUT | `/profile` | Yes | Full onboarding questionnaire (legacy; use Assessment for new flow). |
+| PUT | `/profile` | Yes | Legacy questionnaire (deprecated; use POST /assessment for new users). |
 | GET | `/profile/saved-posts` | Yes | **New.** List saved posts. |
 
 ### 4.8 Chat
@@ -437,20 +451,22 @@ interface CrisisResponse {
 
 ## 5. Screens and flows
 
-### 5.1 Replace initial questionnaire with Assessment
+### 5.1 First-time flow = Assessment (demographics + 10 questions)
 
-**The first-time onboarding is the 10-question wellness assessment, not the old profile questionnaire.**
+**New users complete a single assessment flow: username, age, gender + the 10-question wellness assessment.** Do not use PUT /profile questionnaire for new users.
 
-- **New users:** After signup/login, if the user has **not** completed the assessment, show the **10-question assessment** flow (see [Enums](#6-enums-and-constants)). Do **not** show the old profile questionnaire (PUT /profile with gender, mainInterests, sexualExperience, etc.) as the main onboarding.
-- **Submit:** **POST /assessment** with `AssessmentSubmitBody`. The backend sets `hasOnboarded: true`. Use the response `wellnessProfile` for the results screen.
-- **Check if onboarded:** **GET /assessment** — if `assessment` is null, user has not completed onboarding; show the assessment flow. If present, user can go to the home feed.
-- **Legacy:** PUT /profile (old questionnaire) remains for backward compatibility; new flows should use Assessment only.
+- **New users:** After signup/login, if **GET /assessment** returns `assessment: null`, show the **assessment flow**: collect **username**, **age**, **gender**, then the **10 assessment questions** (see [Enums](#6-enums-and-constants)). Submit everything in one **POST /assessment** call.
+- **Submit:** **POST /assessment** with `AssessmentSubmitBody` (username, age, gender + all 10 assessment fields). Backend sets `hasOnboarded: true` and updates User with username and age.
+- **Check if completed:** **GET /assessment** — if `assessment` is null, show assessment flow. If present, user goes to home feed.
+- **Legacy:** PUT /profile (old questionnaire) is deprecated for new users.
 
 **Assessment flow steps:**
 
-1. **Screen: 10-question assessment** — Collect all 10 answers (concerns, duration, severity, relationship, goals, support history, stress 1–10, primary fear, learning style, preferred time). Submit **POST /assessment**.
-2. **Screen: Processing / loading** — Short wait (e.g. 5–8 s). Use `wellnessProfile` from POST response or **GET /assessment/wellness-profile**.
-3. **Screen: Results / “Your Wellness Profile”** — Show concerns, goals, “Good news” copy, 7-day plan preview. **GET /assessment/plan** for Day 1–7. CTA: “Start Day 1” → go to **Home Feed**.
+1. **Screen: About you** — Collect **username** (3–30 chars, letters/numbers/underscore), **age** (min 18), **gender** (male | female | non-binary | prefer-not-to-say). Optional: combine with step 2 in one long form.
+2. **Screen: 10-question assessment** — Collect concerns, duration, severity, relationship, goals, support history, stress 1–10, primary fear, learning style, preferred time.
+3. **Submit** — **POST /assessment** with username, age, gender + all 10 answers.
+4. **Screen: Processing / loading** — Short wait. Use `wellnessProfile` from POST response or **GET /assessment/wellness-profile**.
+5. **Screen: Results / “Your Wellness Profile”** — Show concerns, goals, 7-day plan preview. **GET /assessment/plan** for Day 1–7. CTA: “Start Day 1” → **Home Feed**.
 
 ### 5.2 Home Feed / Dashboard (main screen)
 
@@ -460,7 +476,7 @@ interface CrisisResponse {
 
 - **progress** — streak, completedCount, totalDaysInPlan, **todayExercise** (today’s practice: day number, exerciseId, title, durationMinutes), plan (first 7 days), memberSince, **currentWeekNumber**, **suggestCheckIn**, latestCheckIn
 - **wellnessProfile** — concerns (focus areas), goals, learningStyle, primaryFear (for personalization)
-- **recommendedContent** — up to 8 videos/content cards (id, title, description, duration, thumbnailUrl, source, playUrl, tags) for “blogs/articles” style cards
+- **recommendedContent** — up to 8 videos/content cards (id, title, description, duration, thumbnailUrl, format, playUrl, tags) for “blogs/articles” style cards
 
 **Layout (suggested):**
 
@@ -476,7 +492,7 @@ interface CrisisResponse {
      - Feeling: much_better | somewhat_better | same | struggling_more  
      - Optional: goal proximity slider (0–100%).  
      - Optional: what helped (multi-select).  
-   - On submit: **POST /progress/check-in** with `weekNumber: progress.currentWeekNumber`, plus feeling, goalProximityPercent, whatHelped.  
+   - On submit: **POST /progress/check-in** with optional body (feeling, goalProximityPercent, whatHelped). **weekNumber is optional** — backend infers current week.  
    - Use `progress.currentWeekNumber` so you don’t ask the user for “week number” — the app does it for them.
 
 3. **Focus & goals**  
@@ -500,9 +516,9 @@ interface CrisisResponse {
 
 ### 5.3 Video library
 
-- **List:**  
-  - **GET /videos?recommended=true** when logged in; otherwise **GET /videos**.  
-  - Render each item using `playUrl` for embed/play (or `thumbnailUrl` + navigate to detail).
+- **List (reel feed):**  
+  - **GET /videos?reels=true** or **GET /videos?recommended=true** when logged in; otherwise **GET /videos**.  
+  - Render reels using `playUrl` in a vertical reel-style player; use `thumbnailUrl` + navigate to detail for cards.
 
 - **Detail:**  
   - **GET /videos/:id** → use `playUrl` for player; show title, description, duration, tags.
@@ -554,6 +570,12 @@ interface CrisisResponse {
 ## 6. Enums and constants
 
 Use these values in forms and when calling APIs.
+
+### Gender (assessment demographics)
+
+```
+'male' | 'female' | 'non-binary' | 'prefer-not-to-say'
+```
 
 ### Assessment — concerns (Q1, 1–3)
 
@@ -635,11 +657,13 @@ Use these values in forms and when calling APIs.
 'daily_exercises' | 'chatbot' | 'community' | 'videos' | 'having_plan'
 ```
 
-### Video source
+### Video format
 
 ```
-'youtube' | 'vimeo' | 'url' | 'asset'
+'reel' | 'standard'
 ```
+
+Videos are asset-only; `playUrl` is the direct play URL.
 
 ---
 

@@ -35,17 +35,25 @@ router.get('/', async (req: AuthRequest, res: Response) => {
   const exercises = await Exercise.find(filter).sort({ phase: 1, order: 1 }).limit(limit).lean();
 
   res.status(200).json({
-    exercises: exercises.map((e) => ({
-      id: (e as { _id: unknown })._id,
-      title: (e as { title: string }).title,
-      description: (e as { description: string }).description,
-      type: (e as { type: string }).type,
-      durationMinutes: (e as { durationMinutes: number }).durationMinutes,
-      tags: (e as { tags?: string[] }).tags ?? [],
-      goalTags: (e as { goalTags?: string[] }).goalTags ?? [],
-      phase: (e as { phase?: number }).phase ?? 1,
-      order: (e as { order?: number }).order ?? 0,
-    })),
+    exercises: exercises.map((e) => {
+      const durationMinutes = (e as { durationMinutes: number }).durationMinutes;
+      const displayType = (e as { displayType?: string }).displayType ?? 'exercise';
+      return {
+        id: (e as { _id: unknown })._id,
+        title: (e as { title: string }).title,
+        description: (e as { description: string }).description,
+        content: (e as { content?: string | null }).content ?? null,
+        contentUrl: (e as { contentUrl?: string | null }).contentUrl ?? null,
+        type: (e as { type: string }).type,
+        displayType: displayType === 'breathing' || displayType === 'read' ? displayType : 'exercise',
+        durationMinutes,
+        durationLabel: durationMinutes < 1 ? '1 min' : `${durationMinutes} min`,
+        tags: (e as { tags?: string[] }).tags ?? [],
+        goalTags: (e as { goalTags?: string[] }).goalTags ?? [],
+        phase: (e as { phase?: number }).phase ?? 1,
+        order: (e as { order?: number }).order ?? 0,
+      };
+    }),
   });
 });
 

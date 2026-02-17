@@ -177,8 +177,8 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
   }));
   apiMessages.push({ role: 'user', content });
 
-  // Prefer wellness profile (Assessment) for Ally; fall back to Onboarding for Eva
-  const [assessment, onboarding] = await Promise.all([
+  // Prefer wellness profile (Assessment) for Ally; fall back to legacy profile for Eva
+  const [assessment, legacyProfile] = await Promise.all([
     Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
     Onboarding.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
   ]);
@@ -187,7 +187,7 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
   const systemPrompt = useAlly
     ? ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, buildWellnessProfileForChat(wellnessProfile))
     : undefined;
-  const userProfile = useAlly ? undefined : buildUserProfile(onboarding as Parameters<typeof buildUserProfile>[0]);
+  const userProfile = useAlly ? undefined : buildUserProfile(legacyProfile as Parameters<typeof buildUserProfile>[0]);
 
   let assistantContent: string;
   try {

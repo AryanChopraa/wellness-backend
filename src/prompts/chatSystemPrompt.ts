@@ -1,6 +1,6 @@
 /**
  * System prompt for the chat AI (Venice). Edit this file to change the assistant’s tone and instructions.
- * The placeholder {userProfile} is replaced at runtime with the user’s onboarding-based profile.
+ * The placeholder {userProfile} is replaced at runtime with the user’s wellness or legacy profile.
  */
 
 /** Ally: empathetic wellness companion (used when user has completed 10-question assessment). */

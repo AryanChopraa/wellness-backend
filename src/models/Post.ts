@@ -21,6 +21,8 @@ const PostSchema = new Schema(
     severityLevel: { type: Number, min: 1, max: 5, default: null },
     /** Trigger warnings for filtering */
     triggerWarnings: { type: [String], default: [] },
+    /** Attached media: asset IDs (from POST /assets). Frontend uploads first, then passes ids here. */
+    assetIds: { type: [Schema.Types.ObjectId], ref: 'Asset', default: [] },
   },
   { timestamps: true }
 );

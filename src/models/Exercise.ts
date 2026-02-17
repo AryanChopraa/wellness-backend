@@ -1,5 +1,8 @@
 import mongoose, { Schema } from 'mongoose';
 
+/** How the frontend should display this item: breathing = short breathing card, exercise = do-it exercise, read = blog/lesson to read */
+const DISPLAY_TYPES = ['breathing', 'exercise', 'read'] as const;
+
 const ExerciseSchema = new Schema(
   {
     title: { type: String, required: true, trim: true },
@@ -8,6 +11,12 @@ const ExerciseSchema = new Schema(
       type: String,
       required: true,
       enum: ['journaling', 'guided_audio', 'interactive', 'micro_lesson', 'challenge'],
+    },
+    /** Frontend display: 'breathing' = "X min breathing" card, 'exercise' = exercise card, 'read' = blog/lesson card */
+    displayType: {
+      type: String,
+      enum: DISPLAY_TYPES,
+      default: 'exercise',
     },
     durationMinutes: { type: Number, required: true, min: 1 },
     /** Tags for filtering (e.g. performance, anxiety, communication). Matches assessment concerns. */

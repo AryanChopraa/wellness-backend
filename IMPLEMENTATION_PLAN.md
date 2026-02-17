@@ -6,9 +6,9 @@
 |------|--------|--------|
 | **Auth** | ✅ | OTP (email/phone), JWT, requireAuth |
 | **User** | ✅ | email, phone, username, avatarUrl, age, hasOnboarded, preferences (anonymousInCommunity, notifications) |
-| **Onboarding** | ✅ | Different schema: age, gender, relationshipStatus, mainInterests, sexualExperience + optional MCQs (physicalActivityLevel, selfRatedInBed, whatToImproveChat, intimacyComfortLevel) |
-| **Profile** | ✅ | GET/PATCH/PUT; PUT = full questionnaire (current onboarding, not 10-Q) |
-| **Chat** | ✅ | Conversations, messages, Venice AI, title generation, buildUserProfile(from Onboarding) |
+| **Legacy profile** | ✅ | Onboarding model: old questionnaire schema (PUT /profile). Not used for new users; use Assessment. |
+| **Profile** | ✅ | GET/PATCH/PUT; PUT = legacy questionnaire (deprecated for new flow) |
+| **Chat** | ✅ | Conversations, messages, Venice AI; uses Assessment for Ally, falls back to legacy profile for Eva if no assessment |
 | **Communities** | ✅ | List, get by slug, default "general" |
 | **Posts** | ✅ | CRUD, like (PostVote), comments, share; filter trending/hot/newest |
 | **Comments** | ✅ | Nested (parentId), likeCount |
@@ -18,7 +18,7 @@
 ## Gap vs Enhanced Workflow (What to Build)
 
 ### 1. 10-Question Assessment (Wellness Questionnaire)
-- **Current:** Onboarding has different questions (gender, mainInterests, sexualExperience, etc.).
+- **Current:** Legacy PUT /profile has different questions (mainInterests, sexualExperience, etc.).
 - **Needed:** New **Assessment** model storing the doc’s 10 questions:
   - Q1: concerns (multi-select) → tags
   - Q2: duration → urgency_score (1–4)
@@ -37,7 +37,7 @@
 - Used by: results page, chat (Ally), exercise recommendations, video recommendations, community “For You”, notifications (preferred_time).
 
 ### 3. Chat (Ally)
-- **Current:** Eva, flirty tone, profile from Onboarding.
+- **Current:** Eva, flirty tone, profile from legacy questionnaire when no Assessment.
 - **Needed:** Ally persona (empathetic wellness companion), system prompt from **wellness profile** (concerns, primary_fear, severity → tone), crisis detection (self-harm → redirect to hotline), optional daily message limit (e.g. 10) for free tier.
 - **Changes:** Use Assessment when present for `buildUserProfile` / new `buildWellnessProfileForChat`; add crisis keyword check before calling AI.
 
@@ -92,5 +92,5 @@
 
 ## Backward Compatibility
 
-- **Onboarding** remains; existing profile PUT still writes to Onboarding. New flow can use **Assessment** only; chat can prefer Assessment when present and fall back to Onboarding for profile text.
+- **Legacy:** PUT /profile still writes to legacy questionnaire model. New flow uses **Assessment** only; chat uses Assessment when present, else falls back to legacy profile for Eva.
 - **Communities/Posts:** New fields (postType, tags) optional; existing posts work with defaults.

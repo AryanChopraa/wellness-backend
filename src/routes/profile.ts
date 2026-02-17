@@ -1,9 +1,13 @@
 import { Router, Response } from 'express';
+import mongoose from 'mongoose';
 import { User } from '../models/User';
 import { Onboarding } from '../models/Onboarding';
+import { Asset } from '../models/Asset';
+import { Assessment } from '../models/Assessment';
 import { UserSavedPost } from '../models/UserSavedPost';
 import { Post } from '../models/Post';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
+import { getDefaultAvatarUrl } from '../utils/defaultAvatar';
 import type {
   Gender,
   RelationshipStatus,
@@ -60,7 +64,8 @@ function isValidUsername(username: unknown): boolean {
 }
 
 /**
- * GET /profile — Protected. Returns current user (with hasOnboarded) and onboarding record if any.
+ * GET /profile — Protected. Returns current user (with hasOnboarded) and legacy profile record if any.
+ * When avatarUrl is null, returns a default pixelated avatar URL (DiceBear) based on userId and gender.
  */
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = req.user;
@@ -69,7 +74,14 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
   const userId = (user as { _id?: unknown })._id;
-  const onboarding = await Onboarding.findOne({ userId }).lean();
+  const uid = new mongoose.Types.ObjectId(String(userId));
+  const [onboarding, assessment] = await Promise.all([
+    Onboarding.findOne({ userId: uid }).lean(),
+    Assessment.findOne({ userId: uid }).select('gender').lean(),
+  ]);
+  const gender = (onboarding as { gender?: string } | null)?.gender ?? (assessment as { gender?: string } | null)?.gender ?? null;
+  const rawAvatarUrl = (user as { avatarUrl?: string }).avatarUrl;
+  const avatarUrl = rawAvatarUrl ?? getDefaultAvatarUrl(String(userId), gender);
   res.status(200).json({
     message: 'Profile loaded',
     user: {
@@ -77,7 +89,7 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       email: (user as { email?: string }).email,
       phone: (user as { phone?: string }).phone,
       username: (user as { username?: string }).username,
-      avatarUrl: (user as { avatarUrl?: string }).avatarUrl,
+      avatarUrl,
       age: (user as { age?: number }).age ?? (onboarding ? (onboarding as { age?: number }).age : undefined),
       hasOnboarded: (user as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (user as { preferences?: unknown }).preferences,
@@ -99,8 +111,9 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * PATCH /profile — Protected. Update only profile page fields: username, age, avatarUrl.
- * All fields optional; only provided fields are updated. Use for the "Edit profile" page.
+ * PATCH /profile — Protected. Update only profile page fields: username, age, avatarUrl, or avatarAssetId.
+ * Use avatarAssetId when frontend has uploaded an image via POST /assets — backend resolves Asset.url and sets avatarUrl.
+ * All fields optional; only provided fields are updated.
  */
 router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = req.user;
@@ -109,8 +122,25 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
   const userId = (user as { _id?: unknown })._id;
-  const body = (req.body ?? {}) as { username?: string; age?: number; avatarUrl?: string };
+  const uid = new mongoose.Types.ObjectId(String(userId));
+  const body = (req.body ?? {}) as { username?: string; age?: number; avatarUrl?: string; avatarAssetId?: string };
   const updates: Record<string, unknown> = {};
+
+  if (body.avatarAssetId !== undefined) {
+    if (body.avatarAssetId === null || body.avatarAssetId === '') {
+      updates.avatarUrl = null;
+    } else if (mongoose.Types.ObjectId.isValid(body.avatarAssetId)) {
+      const asset = await Asset.findOne({
+        _id: new mongoose.Types.ObjectId(body.avatarAssetId),
+        userId: uid,
+      }).select('url').lean();
+      if (!asset) {
+        res.status(400).json({ error: 'Asset not found or you do not own this asset. Upload via POST /assets first.' });
+        return;
+      }
+      updates.avatarUrl = (asset as { url: string }).url;
+    }
+  }
 
   if (body.username !== undefined) {
     if (!body.username || !isValidUsername(body.username)) {
@@ -137,12 +167,12 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
     updates.age = age;
   }
 
-  if (body.avatarUrl !== undefined) {
+  if (body.avatarUrl !== undefined && body.avatarAssetId === undefined) {
     updates.avatarUrl = typeof body.avatarUrl === 'string' ? body.avatarUrl.trim() || null : null;
   }
 
   if (Object.keys(updates).length === 0) {
-    res.status(400).json({ error: 'Provide at least one field to update: username, age, avatarUrl' });
+    res.status(400).json({ error: 'Provide at least one field to update: username, age, avatarUrl, or avatarAssetId' });
     return;
   }
 
@@ -176,8 +206,8 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * PUT /profile — Protected. Create/update onboarding record and set user.hasOnboarded.
- * Full questionnaire; optional: add email or phone to user if missing.
+ * PUT /profile — Protected. Create/update legacy questionnaire record and set user.hasOnboarded.
+ * Deprecated for new users; use POST /assessment instead.
  */
 router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const user = req.user;
@@ -349,7 +379,7 @@ router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
   const onboardingDoc = await Onboarding.findOne({ userId }).lean();
 
   res.status(200).json({
-    message: 'Onboarding saved',
+    message: 'Profile questionnaire saved',
     user: {
       id: (updatedUser as { _id?: unknown })._id,
       email: (updatedUser as { email?: string }).email,
