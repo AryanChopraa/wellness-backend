@@ -1,43 +1,19 @@
 import { Router, Response } from 'express';
 import mongoose from 'mongoose';
 import { User } from '../models/User';
-import { Onboarding } from '../models/Onboarding';
 import { Asset } from '../models/Asset';
 import { Assessment } from '../models/Assessment';
 import { UserSavedPost } from '../models/UserSavedPost';
 import { Post } from '../models/Post';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { getDefaultAvatarUrl } from '../utils/defaultAvatar';
-import type {
-  Gender,
-  RelationshipStatus,
-  MainInterest,
-  SexualExperience,
-  PhysicalActivityLevel,
-  SelfRatedInBed,
-  WhatToImprove,
-  IntimacyComfortLevel,
-  ProfileQuestionnaireBody,
-} from '../types/user';
+import type { Gender } from '../types/user';
 
 const router = Router();
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PHONE_DIGITS = 10;
 const MIN_AGE = 18;
-const GENDERS: Gender[] = ['male', 'female', 'non-binary', 'prefer-not-to-say'];
-const RELATIONSHIP_STATUSES: RelationshipStatus[] = ['single', 'dating', 'married', 'complicated'];
-const MAIN_INTERESTS: MainInterest[] = [
-  'relationship-advice',
-  'intimacy-techniques',
-  'product-knowledge',
-  'general-education',
-];
-const SEXUAL_EXPERIENCES: SexualExperience[] = ['virgin', 'some-experience', 'experienced', 'prefer-not-to-say'];
-const PHYSICAL_ACTIVITY_LEVELS: PhysicalActivityLevel[] = ['sedentary', 'light', 'moderate', 'active', 'prefer-not-to-say'];
-const SELF_RATED_IN_BED: SelfRatedInBed[] = ['beginner', 'somewhat-confident', 'confident', 'prefer-not-to-say'];
-const WHAT_TO_IMPROVE: WhatToImprove[] = ['stamina', 'technique', 'communication', 'confidence', 'exploration', 'prefer-not-to-say'];
-const INTIMACY_COMFORT_LEVELS: IntimacyComfortLevel[] = ['shy', 'getting-comfortable', 'comfortable', 'very-open', 'prefer-not-to-say'];
 
 const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
 const USERNAME_MIN = 3;
@@ -64,7 +40,7 @@ function isValidUsername(username: unknown): boolean {
 }
 
 /**
- * GET /profile — Protected. Returns current user (with hasOnboarded) and legacy profile record if any.
+ * GET /profile — Protected. Returns current user (with hasOnboarded).
  * When avatarUrl is null, returns a default pixelated avatar URL (DiceBear) based on userId and gender.
  */
 router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -75,13 +51,14 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
   }
   const userId = (user as { _id?: unknown })._id;
   const uid = new mongoose.Types.ObjectId(String(userId));
-  const [onboarding, assessment] = await Promise.all([
-    Onboarding.findOne({ userId: uid }).lean(),
-    Assessment.findOne({ userId: uid }).select('gender').lean(),
-  ]);
-  const gender = (onboarding as { gender?: string } | null)?.gender ?? (assessment as { gender?: string } | null)?.gender ?? null;
+  const assessment = await Assessment.findOne({ userId: uid }).select('gender age').lean();
+
+  const gender = (assessment as { gender?: string } | null)?.gender ?? null;
+  const age = (user as { age?: number }).age ?? (assessment as { age?: number } | null)?.age;
+
   const rawAvatarUrl = (user as { avatarUrl?: string }).avatarUrl;
   const avatarUrl = rawAvatarUrl ?? getDefaultAvatarUrl(String(userId), gender);
+
   res.status(200).json({
     message: 'Profile loaded',
     user: {
@@ -90,23 +67,10 @@ router.get('/', requireAuth, async (req: AuthRequest, res: Response) => {
       phone: (user as { phone?: string }).phone,
       username: (user as { username?: string }).username,
       avatarUrl,
-      age: (user as { age?: number }).age ?? (onboarding ? (onboarding as { age?: number }).age : undefined),
+      age: age,
       hasOnboarded: (user as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (user as { preferences?: unknown }).preferences,
     },
-    onboarding: onboarding
-      ? {
-          age: (onboarding as { age?: number }).age,
-          gender: (onboarding as { gender?: string }).gender,
-          relationshipStatus: (onboarding as { relationshipStatus?: string }).relationshipStatus,
-          mainInterests: (onboarding as { mainInterests?: string[] }).mainInterests,
-          sexualExperience: (onboarding as { sexualExperience?: string }).sexualExperience,
-          physicalActivityLevel: (onboarding as { physicalActivityLevel?: string }).physicalActivityLevel,
-          selfRatedInBed: (onboarding as { selfRatedInBed?: string }).selfRatedInBed,
-          whatToImproveChat: (onboarding as { whatToImproveChat?: string }).whatToImproveChat,
-          intimacyComfortLevel: (onboarding as { intimacyComfortLevel?: string }).intimacyComfortLevel,
-        }
-      : null,
   });
 });
 
@@ -182,14 +146,6 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  if (updates.age !== undefined) {
-    await Onboarding.findOneAndUpdate(
-      { userId },
-      { $set: { age: updates.age } },
-      { upsert: false }
-    );
-  }
-
   res.status(200).json({
     message: 'Profile updated',
     user: {
@@ -202,207 +158,6 @@ router.patch('/', requireAuth, async (req: AuthRequest, res: Response) => {
       hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,
       preferences: (updatedUser as { preferences?: unknown }).preferences,
     },
-  });
-});
-
-/**
- * PUT /profile — Protected. Create/update legacy questionnaire record and set user.hasOnboarded.
- * Deprecated for new users; use POST /assessment instead.
- */
-router.put('/', requireAuth, async (req: AuthRequest, res: Response) => {
-  const user = req.user;
-  if (!user) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-  const body = (req.body ?? {}) as Partial<ProfileQuestionnaireBody>;
-
-  if (!body.username || !isValidUsername(body.username)) {
-    res.status(400).json({
-      error: `username is required: 3–30 characters, only letters, numbers, and underscore`,
-    });
-    return;
-  }
-  const usernameLower = (body.username as string).trim().toLowerCase();
-  const existingByUsername = await User.findOne({ username: usernameLower, _id: { $ne: (user as { _id?: unknown })._id } });
-  if (existingByUsername) {
-    res.status(400).json({ error: 'This username is already taken' });
-    return;
-  }
-
-  const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age), 10);
-  if (!Number.isFinite(age) || age < MIN_AGE) {
-    res.status(400).json({ error: `Age is required and must be at least ${MIN_AGE}` });
-    return;
-  }
-
-  if (!body.gender || !GENDERS.includes(body.gender)) {
-    res.status(400).json({ error: 'Valid gender is required (male, female, non-binary, prefer-not-to-say)' });
-    return;
-  }
-  if (!body.relationshipStatus || !RELATIONSHIP_STATUSES.includes(body.relationshipStatus)) {
-    res.status(400).json({ error: 'Valid relationshipStatus is required (single, dating, married, complicated)' });
-    return;
-  }
-  if (!Array.isArray(body.mainInterests) || body.mainInterests.length === 0) {
-    res.status(400).json({
-      error:
-        'mainInterests is required (at least one: relationship-advice, intimacy-techniques, product-knowledge, general-education)',
-    });
-    return;
-  }
-  for (const i of body.mainInterests) {
-    if (!MAIN_INTERESTS.includes(i as MainInterest)) {
-      res.status(400).json({ error: `Invalid mainInterest: ${i}` });
-      return;
-    }
-  }
-  if (!body.sexualExperience || !SEXUAL_EXPERIENCES.includes(body.sexualExperience)) {
-    res.status(400).json({
-      error: 'Valid sexualExperience is required (virgin, some-experience, experienced, prefer-not-to-say)',
-    });
-    return;
-  }
-
-  if (
-    body.physicalActivityLevel !== undefined &&
-    body.physicalActivityLevel !== null &&
-    !PHYSICAL_ACTIVITY_LEVELS.includes(body.physicalActivityLevel)
-  ) {
-    res.status(400).json({ error: 'Invalid physicalActivityLevel' });
-    return;
-  }
-  if (
-    body.selfRatedInBed !== undefined &&
-    body.selfRatedInBed !== null &&
-    !SELF_RATED_IN_BED.includes(body.selfRatedInBed)
-  ) {
-    res.status(400).json({ error: 'Invalid selfRatedInBed' });
-    return;
-  }
-  if (
-    body.whatToImproveChat !== undefined &&
-    body.whatToImproveChat !== null &&
-    !WHAT_TO_IMPROVE.includes(body.whatToImproveChat)
-  ) {
-    res.status(400).json({ error: 'Invalid whatToImproveChat' });
-    return;
-  }
-  if (
-    body.intimacyComfortLevel !== undefined &&
-    body.intimacyComfortLevel !== null &&
-    !INTIMACY_COMFORT_LEVELS.includes(body.intimacyComfortLevel)
-  ) {
-    res.status(400).json({ error: 'Invalid intimacyComfortLevel' });
-    return;
-  }
-
-  const userId = (user as { _id?: unknown })._id;
-  const currentEmail = (user as { email?: string }).email;
-  const currentPhone = (user as { phone?: string }).phone;
-
-  const onboardingPayload: Record<string, unknown> = {
-    userId,
-    age,
-    gender: body.gender!,
-    relationshipStatus: body.relationshipStatus!,
-    mainInterests: body.mainInterests!,
-    sexualExperience: body.sexualExperience!,
-  };
-  if (body.physicalActivityLevel !== undefined && body.physicalActivityLevel !== null) {
-    onboardingPayload.physicalActivityLevel = body.physicalActivityLevel;
-  }
-  if (body.selfRatedInBed !== undefined && body.selfRatedInBed !== null) {
-    onboardingPayload.selfRatedInBed = body.selfRatedInBed;
-  }
-  if (body.whatToImproveChat !== undefined && body.whatToImproveChat !== null) {
-    onboardingPayload.whatToImproveChat = body.whatToImproveChat;
-  }
-  if (body.intimacyComfortLevel !== undefined && body.intimacyComfortLevel !== null) {
-    onboardingPayload.intimacyComfortLevel = body.intimacyComfortLevel;
-  }
-
-  await Onboarding.findOneAndUpdate({ userId }, { $set: onboardingPayload }, { upsert: true, new: true });
-
-  const userSetUpdate: Record<string, unknown> = {
-    hasOnboarded: true,
-    username: usernameLower,
-    age,
-  };
-  const pushProviders: { provider: string; providerId: string; identifier: string; linkedAt: Date }[] = [];
-
-  if (body.email !== undefined && body.email !== null && String(body.email).trim() !== '') {
-    const emailStr = (body.email as string).trim().toLowerCase();
-    if (!isValidEmail(emailStr)) {
-      res.status(400).json({ error: 'Invalid email format' });
-      return;
-    }
-    if (!currentEmail) {
-      userSetUpdate.email = emailStr;
-      pushProviders.push({
-        provider: 'otp',
-        providerId: `otp:${emailStr}:${Date.now()}`,
-        identifier: emailStr,
-        linkedAt: new Date(),
-      });
-    }
-  }
-  if (body.phone !== undefined && body.phone !== null && String(body.phone).trim() !== '') {
-    const phoneStr = normalizePhone(body.phone as string);
-    if (!isValidPhone(phoneStr)) {
-      res.status(400).json({ error: 'Invalid phone format (at least 10 digits)' });
-      return;
-    }
-    if (!currentPhone) {
-      userSetUpdate.phone = phoneStr;
-      pushProviders.push({
-        provider: 'otp',
-        providerId: `otp:${phoneStr}:${Date.now()}`,
-        identifier: phoneStr,
-        linkedAt: new Date(),
-      });
-    }
-  }
-
-  const userUpdateDoc: Record<string, unknown> = { $set: userSetUpdate };
-  if (pushProviders.length > 0)
-    (userUpdateDoc as { $push?: { authProviders: { $each: object[] } } }).$push = {
-      authProviders: { $each: pushProviders },
-    };
-
-  const updatedUser = await User.findByIdAndUpdate(userId, userUpdateDoc, { new: true }).lean();
-  if (!updatedUser) {
-    res.status(404).json({ error: 'User not found' });
-    return;
-  }
-
-  const onboardingDoc = await Onboarding.findOne({ userId }).lean();
-
-  res.status(200).json({
-    message: 'Profile questionnaire saved',
-    user: {
-      id: (updatedUser as { _id?: unknown })._id,
-      email: (updatedUser as { email?: string }).email,
-      phone: (updatedUser as { phone?: string }).phone,
-      username: (updatedUser as { username?: string }).username,
-      avatarUrl: (updatedUser as { avatarUrl?: string }).avatarUrl,
-      age: (updatedUser as { age?: number }).age,
-      hasOnboarded: (updatedUser as { hasOnboarded?: boolean }).hasOnboarded,
-      preferences: (updatedUser as { preferences?: unknown }).preferences,
-    },
-    onboarding: onboardingDoc
-      ? {
-          age: (onboardingDoc as { age?: number }).age,
-          gender: (onboardingDoc as { gender?: string }).gender,
-          relationshipStatus: (onboardingDoc as { relationshipStatus?: string }).relationshipStatus,
-          mainInterests: (onboardingDoc as { mainInterests?: string[] }).mainInterests,
-          sexualExperience: (onboardingDoc as { sexualExperience?: string }).sexualExperience,
-          physicalActivityLevel: (onboardingDoc as { physicalActivityLevel?: string }).physicalActivityLevel,
-          selfRatedInBed: (onboardingDoc as { selfRatedInBed?: string }).selfRatedInBed,
-          whatToImproveChat: (onboardingDoc as { whatToImproveChat?: string }).whatToImproveChat,
-          intimacyComfortLevel: (onboardingDoc as { intimacyComfortLevel?: string }).intimacyComfortLevel,
-        }
-      : null,
   });
 });
 

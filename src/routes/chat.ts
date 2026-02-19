@@ -6,34 +6,72 @@ import { requireAuth, type AuthRequest } from '../middleware/auth';
 import { sendError } from '../utils/response';
 import { getVeniceCompletion, type ChatMessage } from '../services/veniceChat';
 import { generateConversationTitle } from '../services/openaiTitle';
-import { buildUserProfile, buildWellnessProfileForChat } from '../utils/chatProfile';
-import { Onboarding } from '../models/Onboarding';
+import { buildWellnessProfileForChat } from '../utils/chatProfile';
 import { Assessment } from '../models/Assessment';
 import { getWellnessProfile } from '../services/wellnessProfile';
 import { ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE } from '../prompts/chatSystemPrompt';
+import { getPersonasForGender, getPersonaById } from '../config/personas';
 
 const router = Router();
 
-/** Max total messages (user + assistant) per conversation. */
-const MAX_MESSAGES_PER_CONVERSATION = 100;
+/** Default max total messages (user + assistant) per conversation if not set for user. */
+const DEFAULT_MAX_MESSAGES_PER_CONVERSATION = 100;
+
+
+// ---------------------------------------------------------------------------
+// GET /chat/config – get available personas based on user gender
+// ---------------------------------------------------------------------------
+router.get('/config', requireAuth, async (req: AuthRequest, res: Response) => {
+  const userId = req.userId!;
+
+  // Fetch assessment for gender, defaulting to female set if not found/specified (safe default)
+  const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+  const gender = assessment?.gender || 'female';
+
+  const personas = getPersonasForGender(gender);
+
+  res.json({
+    personas: personas.map(p => ({
+      id: p.id,
+      name: p.name,
+      role: p.role,
+      description: p.description,
+      avatarUrl: p.avatarUrl
+    }))
+  });
+});
 
 // ---------------------------------------------------------------------------
 // POST /chat/conversations – create a new conversation
-// Body: { title?: string }
+// Body: { title?: string, personaId?: string }
 // ---------------------------------------------------------------------------
 router.post('/conversations', requireAuth, async (req: AuthRequest, res: Response) => {
   const userId = req.userId!;
   const title = typeof req.body?.title === 'string' ? req.body.title.trim() : 'New conversation';
+  const personaId = typeof req.body?.personaId === 'string' ? req.body.personaId.trim() : undefined;
+
+  // Validate persona if provided
+  if (personaId) {
+    const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+    const gender = assessment?.gender || 'female';
+    const allowedPersonas = getPersonasForGender(gender);
+    if (!allowedPersonas.some(p => p.id === personaId)) {
+      sendError(res, 400, 'Invalid persona for user');
+      return;
+    }
+  }
 
   const conversation = await Conversation.create({
     userId: new mongoose.Types.ObjectId(userId),
     title: title || 'New conversation',
+    persona: personaId
   });
 
   res.status(201).json({
     conversation: {
       id: conversation._id.toString(),
       title: conversation.title,
+      persona: conversation.persona,
       createdAt: (conversation as { createdAt?: Date }).createdAt?.toISOString?.() ?? new Date().toISOString(),
     },
   });
@@ -52,6 +90,7 @@ router.get('/conversations', requireAuth, async (req: AuthRequest, res: Response
   const list = conversations.map((c) => ({
     id: (c._id as mongoose.Types.ObjectId).toString(),
     title: (c as { title?: string }).title ?? 'New conversation',
+    persona: (c as { persona?: string }).persona,
     createdAt: (c as { createdAt?: Date }).createdAt?.toISOString?.() ?? '',
     updatedAt: (c as { updatedAt?: Date }).updatedAt?.toISOString?.() ?? '',
   }));
@@ -96,6 +135,7 @@ router.get('/conversations/:id', requireAuth, async (req: AuthRequest, res: Resp
     conversation: {
       id: (conversation._id as mongoose.Types.ObjectId).toString(),
       title: (conversation as { title?: string }).title ?? 'New conversation',
+      persona: (conversation as { persona?: string }).persona,
       createdAt: (conversation as { createdAt?: Date }).createdAt?.toISOString?.() ?? '',
       updatedAt: (conversation as { updatedAt?: Date }).updatedAt?.toISOString?.() ?? '',
       messageCount: messageList.length,
@@ -137,9 +177,10 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
 
   const currentCount = await Message.countDocuments({ conversationId: new mongoose.Types.ObjectId(conversationId) });
 
-  // Rate limit: 100 total messages (user + assistant) per conversation.
-  // If at or over limit: return 429 without calling the AI and without saving the user message.
-  if (currentCount + 2 > MAX_MESSAGES_PER_CONVERSATION) {
+  // Rate limit: using user-specific limit (or fallback to default)
+  const userMessageLimit = (req.user as { messageLimit?: number })?.messageLimit ?? DEFAULT_MAX_MESSAGES_PER_CONVERSATION;
+  if (currentCount + 2 > userMessageLimit) {
+
     res.status(429).json({
       error: 'Rate limit reached',
       message: 'Rate limit reached',
@@ -177,17 +218,29 @@ router.post('/conversations/:id/messages', requireAuth, async (req: AuthRequest,
   }));
   apiMessages.push({ role: 'user', content });
 
-  // Prefer wellness profile (Assessment) for Ally; fall back to legacy profile for Eva
-  const [assessment, legacyProfile] = await Promise.all([
-    Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
-    Onboarding.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean(),
-  ]);
-  const wellnessProfile = getWellnessProfile(assessment);
-  const useAlly = !!wellnessProfile;
-  const systemPrompt = useAlly
-    ? ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, buildWellnessProfileForChat(wellnessProfile))
-    : undefined;
-  const userProfile = useAlly ? undefined : buildUserProfile(legacyProfile as Parameters<typeof buildUserProfile>[0]);
+  // Use wellness profile (Assessment) for AI context
+  const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
+
+  // Determine System Prompt
+  let systemPrompt: string | undefined;
+
+  const personaId = (conversation as { persona?: string }).persona;
+  if (personaId) {
+    // 1. Persona-based conversation
+    const persona = getPersonaById(personaId);
+    if (persona) {
+      systemPrompt = persona.systemPrompt;
+    }
+  }
+
+  // 2. Fallback to standard "Ally" (Wellness Profile) or "Eva" (Legacy) logic if no persona
+  if (!systemPrompt) {
+    const wellnessProfile = getWellnessProfile(assessment);
+    const useAlly = !!wellnessProfile;
+    systemPrompt = ALLY_CHAT_SYSTEM_PROMPT_TEMPLATE.replace(/\{userProfile\}/g, buildWellnessProfileForChat(wellnessProfile));
+  }
+
+  const userProfile = undefined;
 
   let assistantContent: string;
   try {

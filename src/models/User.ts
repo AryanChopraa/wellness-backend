@@ -26,6 +26,7 @@ const UserSchema = new Schema(
     },
     isBlocked: { type: Boolean, default: false },
   },
+
   { timestamps: true }
 );
 
