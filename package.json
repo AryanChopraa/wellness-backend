@@ -8,7 +8,9 @@
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "seed:products": "ts-node -r dotenv/config src/scripts/insert-product-data.ts",
-    "seed:wellness": "ts-node -r dotenv/config src/scripts/seed-wellness-data.ts"
+    "seed:wellness": "ts-node -r dotenv/config src/scripts/seed-wellness-data.ts",
+    "yt:download": "ts-node scripts/download-yt-videos.ts",
+    "seed:real-videos": "ts-node -r dotenv/config scripts/seed-real-videos.ts"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.19.0",

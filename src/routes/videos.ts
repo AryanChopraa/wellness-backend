@@ -8,20 +8,47 @@ import { getWellnessProfile } from '../services/wellnessProfile';
 import { getVideoPlayUrl } from '../utils/videoUrl';
 
 const router = Router();
-const DEFAULT_LIMIT = 20;
+
+const PAGE_LIMIT = 5; // videos per page — small so first paint is fast
+const MAX_LIMIT = 10;
+
+const VALID_CATEGORIES = ['stamina', 'pleasure', 'dating', 'education', 'confidence'] as const;
 
 /**
- * GET /videos — List videos (asset-only). If auth: "recommended for you" by assessment; else all.
- * Query: tags (comma), limit, recommended=true (when auth), reels=true (only short-form reels).
+ * GET /videos
+ * Query params:
+ *   category   — one of the 5 categories (filter)
+ *   page       — 1-based page number (default 1)
+ *   limit      — items per page (default 5, max 10)
+ *   recommended — 'true' + auth → personalised order
+ *   reels      — 'true' → short-form only (legacy, kept for compat)
+ *   tags       — comma-separated (legacy)
+ *
+ * Response: { videos, total, page, hasMore }
  */
 router.get('/', async (req: AuthRequest, res: Response) => {
-  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit), 10) || DEFAULT_LIMIT));
-  const recommended = req.query.recommended === 'true' && req.userId;
-  const reelsOnly = req.query.reels === 'true';
+  const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(String(req.query.limit), 10) || PAGE_LIMIT));
+  const page  = Math.max(1, parseInt(String(req.query.page), 10) || 1);
+  const skip  = (page - 1) * limit;
 
+  const categoryParam = typeof req.query.category === 'string' ? req.query.category : '';
+  const category = VALID_CATEGORIES.includes(categoryParam as typeof VALID_CATEGORIES[number])
+    ? categoryParam
+    : '';
+
+  const recommended = req.query.recommended === 'true' && req.userId;
+  const reelsOnly   = req.query.reels === 'true';
+
+  // ── Build filter ──────────────────────────────────────────────────────────
   let filter: Record<string, unknown> = { isActive: true, source: 'asset' };
 
-  if (reelsOnly) {
+  // Category tab filter (takes priority over legacy tag filter)
+  if (category) {
+    filter.category = category;
+  }
+
+  // Legacy reels-only compat
+  if (reelsOnly && !category) {
     (filter as { $or?: unknown[] }).$or = [
       { format: 'reel' },
       { durationSeconds: { $lte: 90 } },
@@ -29,41 +56,40 @@ router.get('/', async (req: AuthRequest, res: Response) => {
     ];
   }
 
-  if (recommended && req.userId) {
+  // Personalised ordering when authenticated
+  if (recommended && req.userId && !category) {
     const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(req.userId) }).lean();
     const profile = getWellnessProfile(assessment);
     if (profile && profile.concerns.length > 0) {
       const andClauses: Record<string, unknown>[] = [
-        {
-          $or: [
-            { tags: { $in: profile.concerns } },
-            { fearAddressed: profile.primaryFear },
-          ],
-        },
-        {
-          $or: [
-            { severityLevels: { $size: 0 } },
-            { severityLevels: profile.severityScore },
-          ],
-        },
+        { $or: [{ tags: { $in: profile.concerns } }, { fearAddressed: profile.primaryFear }] },
+        { $or: [{ severityLevels: { $size: 0 } }, { severityLevels: profile.severityScore }] },
       ];
       if (reelsOnly) {
-        andClauses.push({
-          $or: [{ format: 'reel' }, { durationSeconds: { $lte: 90 } }, { durationSeconds: null }],
-        });
+        andClauses.push({ $or: [{ format: 'reel' }, { durationSeconds: { $lte: 90 } }, { durationSeconds: null }] });
       }
       filter = { isActive: true, source: 'asset', $and: andClauses };
     }
   }
 
-  const tagsStr = typeof req.query.tags === 'string' ? req.query.tags : '';
-  if (tagsStr) {
-    const tags = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
-    if (tags.length > 0) (filter as { tags?: unknown }).tags = { $in: tags };
+  // Legacy tag filter (kept for compat, ignored when category is set)
+  if (!category) {
+    const tagsStr = typeof req.query.tags === 'string' ? req.query.tags : '';
+    if (tagsStr) {
+      const tags = tagsStr.split(',').map((t) => t.trim()).filter(Boolean);
+      if (tags.length > 0) (filter as { tags?: unknown }).tags = { $in: tags };
+    }
   }
 
-  const videos = await Video.find(filter).sort({ viewCount: -1 }).limit(limit).lean();
+  // ── Query ─────────────────────────────────────────────────────────────────
+  const [videos, total] = await Promise.all([
+    Video.find(filter).sort({ viewCount: -1, _id: 1 }).skip(skip).limit(limit).lean(),
+    Video.countDocuments(filter),
+  ]);
 
+  const hasMore = skip + videos.length < total;
+
+  // ── Resolve asset URLs ────────────────────────────────────────────────────
   const assetIds = videos
     .map((v) => (v as { assetId?: mongoose.Types.ObjectId }).assetId)
     .filter(Boolean) as mongoose.Types.ObjectId[];
@@ -74,27 +100,31 @@ router.get('/', async (req: AuthRequest, res: Response) => {
 
   res.status(200).json({
     videos: videos.map((v) => {
-      const assetId = (v as { assetId: mongoose.Types.ObjectId }).assetId;
+      const assetId  = (v as { assetId: mongoose.Types.ObjectId }).assetId;
       const assetUrl = assetId ? assetUrlMap.get(String(assetId)) ?? null : null;
-      const playUrl = getVideoPlayUrl({ source: 'asset', assetUrl: assetUrl ?? null });
+      const playUrl  = getVideoPlayUrl({ source: 'asset', assetUrl: assetUrl ?? null });
       return {
-        id: (v as { _id: unknown })._id,
-        title: (v as { title: string }).title,
-        description: (v as { description?: string }).description ?? '',
-        duration: (v as { duration?: string }).duration ?? '',
-        durationSeconds: (v as { durationSeconds?: number | null }).durationSeconds ?? null,
-        thumbnailUrl: (v as { thumbnailUrl?: string }).thumbnailUrl ?? '',
-        format: (v as { format?: string }).format ?? 'reel',
-        assetId: assetId ?? null,
+        id:             (v as { _id: unknown })._id,
+        title:          (v as { title: string }).title,
+        description:    (v as { description?: string }).description ?? '',
+        duration:       (v as { duration?: string }).duration ?? '',
+        durationSeconds:(v as { durationSeconds?: number | null }).durationSeconds ?? null,
+        thumbnailUrl:   (v as { thumbnailUrl?: string }).thumbnailUrl ?? '',
+        format:         (v as { format?: string }).format ?? 'reel',
+        category:       (v as { category?: string | null }).category ?? null,
+        assetId:        assetId ?? null,
         playUrl,
-        tags: (v as { tags?: string[] }).tags ?? [],
-        viewCount: (v as { viewCount?: number }).viewCount ?? 0,
+        tags:           (v as { tags?: string[] }).tags ?? [],
+        viewCount:      (v as { viewCount?: number }).viewCount ?? 0,
       };
     }),
+    total,
+    page,
+    hasMore,
   });
 });
 
-/** GET /videos/:id — Get one video by id. */
+/** GET /videos/:id — single video */
 router.get('/:id', async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -115,17 +145,18 @@ router.get('/:id', async (req: AuthRequest, res: Response) => {
   const playUrl = getVideoPlayUrl({ source: 'asset', assetUrl });
   res.status(200).json({
     video: {
-      id: (video as { _id: unknown })._id,
-      title: (video as { title: string }).title,
-      description: (video as { description?: string }).description ?? '',
-      duration: (video as { duration?: string }).duration ?? '',
-      durationSeconds: (video as { durationSeconds?: number | null }).durationSeconds ?? null,
-      thumbnailUrl: (video as { thumbnailUrl?: string }).thumbnailUrl ?? '',
-      format: (video as { format?: string }).format ?? 'reel',
-      assetId: assetId ?? null,
+      id:             (video as { _id: unknown })._id,
+      title:          (video as { title: string }).title,
+      description:    (video as { description?: string }).description ?? '',
+      duration:       (video as { duration?: string }).duration ?? '',
+      durationSeconds:(video as { durationSeconds?: number | null }).durationSeconds ?? null,
+      thumbnailUrl:   (video as { thumbnailUrl?: string }).thumbnailUrl ?? '',
+      format:         (video as { format?: string }).format ?? 'reel',
+      category:       (video as { category?: string | null }).category ?? null,
+      assetId:        assetId ?? null,
       playUrl,
-      tags: (video as { tags?: string[] }).tags ?? [],
-      viewCount: (video as { viewCount?: number }).viewCount ?? 0,
+      tags:           (video as { tags?: string[] }).tags ?? [],
+      viewCount:      (video as { viewCount?: number }).viewCount ?? 0,
     },
   });
 });

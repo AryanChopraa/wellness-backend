@@ -23,6 +23,16 @@ const VideoSchema = new Schema(
     assetId: { type: Schema.Types.ObjectId, ref: 'Asset', required: true },
     /** reel = short-form vertical (reel-style); standard = longer */
     format: { type: String, enum: ['reel', 'standard'], default: 'reel' },
+    /**
+     * Primary content category — used for tab filtering in the feed.
+     * One of: stamina | pleasure | dating | education | confidence
+     */
+    category: {
+      type: String,
+      enum: ['stamina', 'pleasure', 'dating', 'education', 'confidence'],
+      default: null,
+      index: true,
+    },
     /** Tags for recommendation (performance, anxiety, communication, etc.) */
     tags: { type: [String], default: [] },
     /** Primary fear this video addresses (from Q8) */
