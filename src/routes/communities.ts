@@ -4,9 +4,7 @@ import { Community } from '../models/Community';
 import { Post } from '../models/Post';
 import { User } from '../models/User';
 import { Asset } from '../models/Asset';
-import { Assessment } from '../models/Assessment';
 import { requireAuth, type AuthRequest } from '../middleware/auth';
-import { getWellnessProfile } from '../services/wellnessProfile';
 import { getDefaultAvatarUrl } from '../utils/defaultAvatar';
 
 const router = Router();
@@ -234,10 +232,10 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       authorId: (p as { authorId: unknown }).authorId,
       author: author
         ? {
-            id: author.id,
-            username: showAnonymous ? 'Anonymous' : author.username,
-            avatarUrl: showAnonymous ? null : author.avatarUrl,
-          }
+          id: author.id,
+          username: showAnonymous ? 'Anonymous' : author.username,
+          avatarUrl: showAnonymous ? null : author.avatarUrl,
+        }
         : null,
       title: (p as { title: string }).title,
       content: (p as { content: string }).content,
@@ -247,6 +245,7 @@ router.get('/:idOrSlug/posts', async (req, res: Response) => {
       postType: (p as { postType?: string }).postType ?? 'story',
       tags: (p as { tags?: string[] }).tags ?? [],
       severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
+      isNsfw: (p as { isNsfw?: boolean }).isNsfw ?? false,
       triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       assets,
       createdAt: (p as { createdAt?: Date }).createdAt,
@@ -292,6 +291,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     postType?: 'question' | 'story' | 'progress_update' | 'resource_share' | 'seeking_support';
     tags?: string[];
     severityLevel?: number;
+    isNsfw?: boolean;
     triggerWarnings?: string[];
     assetIds?: string[];
   };
@@ -300,6 +300,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
   const postType = body.postType && ['question', 'story', 'progress_update', 'resource_share', 'seeking_support'].includes(body.postType) ? body.postType : 'story';
   const tags = Array.isArray(body.tags) ? body.tags.filter((t) => typeof t === 'string').slice(0, 10) : [];
   const severityLevel = typeof body.severityLevel === 'number' && body.severityLevel >= 1 && body.severityLevel <= 5 ? body.severityLevel : null;
+  const isNsfw = body.isNsfw === true;
   const triggerWarnings = Array.isArray(body.triggerWarnings) ? body.triggerWarnings.filter((t) => typeof t === 'string').slice(0, 5) : [];
   const rawAssetIds = Array.isArray(body.assetIds) ? body.assetIds.filter((id) => typeof id === 'string' && mongoose.Types.ObjectId.isValid(id)) : [];
 
@@ -334,6 +335,7 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
     postType,
     tags,
     severityLevel,
+    isNsfw,
     triggerWarnings,
     assetIds,
   });
@@ -361,10 +363,10 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
       authorId: post.authorId,
       author: author
         ? {
-            id: (author as { _id: unknown })._id,
-            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : authorAvatarUrl,
-          }
+          id: (author as { _id: unknown })._id,
+          username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
+          avatarUrl: showAnonymous ? null : authorAvatarUrl,
+        }
         : null,
       title: post.title,
       content: post.content,
@@ -373,7 +375,8 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
       shareCount: 0,
       postType: (post as { postType?: string }).postType ?? 'story',
       tags: (post as { tags?: string[] }).tags ?? [],
-      severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
+      severityLevel: post.severityLevel,
+      isNsfw: post.isNsfw,
       triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       assets: assetsForPost,
       createdAt: post.createdAt,
@@ -382,93 +385,6 @@ router.post('/:idOrSlug/posts', requireAuth, async (req: AuthRequest, res: Respo
   });
 });
 
-/**
- * GET /communities/:idOrSlug/feed/for-you — Personalized feed by assessment tags (auth required).
- */
-router.get('/:idOrSlug/feed/for-you', requireAuth, async (req: AuthRequest, res: Response) => {
-  await ensureDefaultCommunity();
-  const userId = req.userId!;
-  const { idOrSlug } = req.params;
-  const isId = mongoose.Types.ObjectId.isValid(idOrSlug) && String(new mongoose.Types.ObjectId(idOrSlug)) === idOrSlug;
-  const community = isId
-    ? await Community.findById(idOrSlug)
-    : await Community.findOne({ slug: idOrSlug.toLowerCase() });
-  if (!community) {
-    res.status(404).json({ error: 'Community not found' });
-    return;
-  }
-  const assessment = await Assessment.findOne({ userId: new mongoose.Types.ObjectId(userId) }).lean();
-  const profile = getWellnessProfile(assessment);
-  const tags = profile?.concerns?.length ? profile.concerns : [];
 
-  const page = Math.max(1, parseInt(String(req.query.page), 10) || DEFAULT_PAGE);
-  const limit = Math.min(MAX_LIMIT, Math.max(1, parseInt(String(req.query.limit), 10) || DEFAULT_LIMIT));
-  const skip = (page - 1) * limit;
-
-  const match: Record<string, unknown> = { communityId: community._id };
-  if (tags.length > 0) {
-    (match as { tags?: { $in: string[] } }).tags = { $in: tags };
-  }
-
-  const [posts, total] = await Promise.all([
-    Post.find(match).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-    Post.countDocuments(match),
-  ]);
-
-  const authorIds = [...new Set(posts.map((p) => String((p as { authorId: unknown }).authorId)))];
-  const allAssetIdsForYou = posts.flatMap((p) => (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? []);
-  const uniqueAssetIdsForYou = [...new Set(allAssetIdsForYou.map((id) => String(id)))];
-
-  const [authorsForYou, assetDocsForYou] = await Promise.all([
-    User.find({ _id: { $in: authorIds } }).select('username avatarUrl preferences.anonymousInCommunity').lean(),
-    uniqueAssetIdsForYou.length > 0 ? Asset.find({ _id: { $in: uniqueAssetIdsForYou.map((id) => new mongoose.Types.ObjectId(id)) } }).select('_id url').lean() : [],
-  ]);
-  const assetUrlMapForYou = new Map(assetDocsForYou.map((a) => [String((a as { _id: unknown })._id), (a as { url: string }).url]));
-  const authorMapForYou = new Map(
-    authorsForYou.map((a) => {
-      const id = String((a as { _id: unknown })._id);
-      const avatarUrl = (a as { avatarUrl?: string }).avatarUrl ?? getDefaultAvatarUrl(id);
-      return [
-        id,
-        {
-          id: (a as { _id: unknown })._id,
-          username: (a as { username?: string }).username,
-          avatarUrl,
-          anonymousInCommunity: (a as { preferences?: { anonymousInCommunity?: boolean } }).preferences?.anonymousInCommunity,
-        },
-      ];
-    })
-  );
-
-  const postsWithAuthorsForYou = posts.map((p) => {
-    const author = authorMapForYou.get(String((p as { authorId: unknown }).authorId));
-    const showAnonymous = author?.anonymousInCommunity === true;
-    const postAssetIds = (p as { assetIds?: mongoose.Types.ObjectId[] }).assetIds ?? [];
-    const assets = postAssetIds.map((aid) => ({ id: aid, url: assetUrlMapForYou.get(String(aid)) })).filter((a) => a.url) as { id: mongoose.Types.ObjectId; url: string }[];
-    return {
-      id: (p as { _id: unknown })._id,
-      communityId: (p as { communityId: unknown }).communityId,
-      authorId: (p as { authorId: unknown }).authorId,
-      author: author ? { id: author.id, username: showAnonymous ? 'Anonymous' : author.username, avatarUrl: showAnonymous ? null : author.avatarUrl } : null,
-      title: (p as { title: string }).title,
-      content: (p as { content: string }).content,
-      likeCount: (p as { likeCount?: number }).likeCount ?? 0,
-      commentCount: (p as { commentCount?: number }).commentCount ?? 0,
-      shareCount: (p as { shareCount?: number }).shareCount ?? 0,
-      postType: (p as { postType?: string }).postType ?? 'story',
-      tags: (p as { tags?: string[] }).tags ?? [],
-      severityLevel: (p as { severityLevel?: number | null }).severityLevel ?? null,
-      triggerWarnings: (p as { triggerWarnings?: string[] }).triggerWarnings ?? [],
-      assets,
-      createdAt: (p as { createdAt?: Date }).createdAt,
-      updatedAt: (p as { updatedAt?: Date }).updatedAt,
-    };
-  });
-
-  res.status(200).json({
-    posts: postsWithAuthorsForYou,
-    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-  });
-});
 
 export const communityRoutes = router;

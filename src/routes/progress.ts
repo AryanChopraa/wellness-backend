@@ -37,17 +37,43 @@ router.get('/dashboard', requireAuth, async (req: AuthRequest, res: Response) =>
   const profile = getWellnessProfile(assessment);
   const actionableContent = profile ? await getActionableContent(profile) : [];
 
-  const tags = profile?.concerns?.length ? profile.concerns : ['stress'];
   const { Video } = await import('../models/Video');
   const { Asset } = await import('../models/Asset');
-  const recommendedVideos = await Video.find({
+  // ── Query (Seeded Random) ─────────────────────────────────────────────────
+  // Show all active asset videos shuffled — no tag-narrowing here since we
+  // have limited content and tag matching would show < 6 items.
+  const allVideosMeta = await Video.find({
     isActive: true,
     source: 'asset',
-    $or: [{ tags: { $in: tags } }, { fearAddressed: profile?.primaryFear }],
-  })
-    .sort({ viewCount: -1 })
-    .limit(8)
-    .lean();
+  }).select('_id').lean();
+
+  // Create a seed that changes every hour but is unique-ish per user
+  const seedStr = userId + '-' + Math.floor(Date.now() / 3600000);
+  let seedNum = 0;
+  for (let i = 0; i < seedStr.length; i++) {
+    seedNum = (seedNum << 5) - seedNum + seedStr.charCodeAt(i);
+    seedNum |= 0;
+  }
+
+  const seededRandom = () => {
+    seedNum = (seedNum * 1664525 + 1013904223) | 0;
+    return (seedNum >>> 0) / 4294967296;
+  };
+
+  const shuffledIds = allVideosMeta.map((v) => v._id);
+  for (let i = shuffledIds.length - 1; i > 0; i--) {
+    const j = Math.floor(seededRandom() * (i + 1));
+    [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]];
+  }
+
+  const limit = 6;
+  const pageIds = shuffledIds.slice(0, limit);
+  const recommendedVideosUnordered = await Video.find({ _id: { $in: pageIds } }).lean();
+
+  // Re-sort to match shuffled order
+  const recommendedVideos = pageIds
+    .map((id) => recommendedVideosUnordered.find((v) => String((v as { _id: unknown })._id) === String(id)))
+    .filter(Boolean);
 
   const recAssetIds = recommendedVideos
     .map((v) => (v as { assetId?: mongoose.Types.ObjectId }).assetId)
@@ -60,10 +86,10 @@ router.get('/dashboard', requireAuth, async (req: AuthRequest, res: Response) =>
   res.status(200).json({
     wellnessProfile: profile
       ? {
-          concerns: profile.concerns,
-          goals: profile.goals,
-          primaryFear: profile.primaryFear,
-        }
+        concerns: profile.concerns,
+        goals: profile.goals,
+        primaryFear: profile.primaryFear,
+      }
       : null,
     actionableContent,
     recommendedContent: recommendedVideos.map((v) => {

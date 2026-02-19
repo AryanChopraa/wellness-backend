@@ -23,6 +23,8 @@ const PostSchema = new Schema(
     triggerWarnings: { type: [String], default: [] },
     /** Attached media: asset IDs (from POST /assets). Frontend uploads first, then passes ids here. */
     assetIds: { type: [Schema.Types.ObjectId], ref: 'Asset', default: [] },
+    /** NSFW flag */
+    isNsfw: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

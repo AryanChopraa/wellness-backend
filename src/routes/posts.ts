@@ -50,10 +50,10 @@ router.get('/:id', async (req, res: Response) => {
       authorId: (post as { authorId: unknown }).authorId,
       author: author
         ? {
-            id: (author as { _id: unknown })._id,
-            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : authorAvatarUrl,
-          }
+          id: (author as { _id: unknown })._id,
+          username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
+          avatarUrl: showAnonymous ? null : authorAvatarUrl,
+        }
         : null,
       title: (post as { title: string }).title,
       content: (post as { content: string }).content,
@@ -63,6 +63,7 @@ router.get('/:id', async (req, res: Response) => {
       postType: (post as { postType?: string }).postType ?? 'story',
       tags: (post as { tags?: string[] }).tags ?? [],
       severityLevel: (post as { severityLevel?: number | null }).severityLevel ?? null,
+      isNsfw: (post as { isNsfw?: boolean }).isNsfw ?? false,
       triggerWarnings: (post as { triggerWarnings?: string[] }).triggerWarnings ?? [],
       assets,
       createdAt: (post as { createdAt?: Date }).createdAt,
@@ -266,10 +267,10 @@ router.get('/:id/comments', async (req, res: Response) => {
       authorId: (c as { authorId: unknown }).authorId,
       author: author
         ? {
-            id: author.id,
-            username: showAnonymous ? 'Anonymous' : author.username,
-            avatarUrl: showAnonymous ? null : author.avatarUrl,
-          }
+          id: author.id,
+          username: showAnonymous ? 'Anonymous' : author.username,
+          avatarUrl: showAnonymous ? null : author.avatarUrl,
+        }
         : null,
       parentId: (c as { parentId?: unknown }).parentId,
       content: (c as { content: string }).content,
@@ -363,10 +364,10 @@ router.post('/:id/comments', requireAuth, async (req: AuthRequest, res: Response
       authorId: comment.authorId,
       author: author
         ? {
-            id: (author as { _id: unknown })._id,
-            username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
-            avatarUrl: showAnonymous ? null : commentAuthorAvatar,
-          }
+          id: (author as { _id: unknown })._id,
+          username: showAnonymous ? 'Anonymous' : (author as { username?: string }).username,
+          avatarUrl: showAnonymous ? null : commentAuthorAvatar,
+        }
         : null,
       parentId: comment.parentId,
       content: comment.content,
