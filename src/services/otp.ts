@@ -1,6 +1,7 @@
 import { Otp } from '../models/Otp';
 import { env } from '../config/env';
 import type { OtpIdentifierType } from '../types/auth';
+import { sendOtpEmail } from './email';
 
 const DIGITS = 6;
 const LENGTH = 10 ** DIGITS;
@@ -52,6 +53,10 @@ export async function createOtp(
     expiresAt,
     type,
   });
+
+  if (type === 'email') {
+    await sendOtpEmail(normalized, code, env.otp.expiryMinutes);
+  }
 
   return { code, expiresAt };
 }

@@ -25,4 +25,8 @@ export const env = {
     /** Path to service account JSON key file. Or set GOOGLE_APPLICATION_CREDENTIALS. */
     keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS ?? process.env.GCS_KEY_FILENAME ?? '',
   },
+  resend: {
+    apiKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.RESEND_FROM ?? 'OTP <onboarding@resend.dev>',
+  },
 };
