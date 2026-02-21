@@ -4,7 +4,7 @@
   "description": "My Peach API — Node.js + TypeScript + MongoDB, OTP-only auth",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "npm i && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "seed:products": "ts-node -r dotenv/config src/scripts/insert-product-data.ts",
@@ -22,7 +22,8 @@
     "mongoose": "^8.8.0",
     "multer": "^2.0.2",
     "openai": "^6.18.0",
-    "resend": "^6.9.2"
+    "resend": "^6.9.2",
+    "twilio": "^5.12.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

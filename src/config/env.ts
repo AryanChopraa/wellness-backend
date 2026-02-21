@@ -29,4 +29,9 @@ export const env = {
     apiKey: process.env.RESEND_API_KEY ?? '',
     from: process.env.RESEND_FROM ?? 'OTP <onboarding@resend.dev>',
   },
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
+    authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
+    from: process.env.TWILIO_FROM ?? '',
+  },
 };
