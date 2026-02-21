@@ -1,7 +1,7 @@
 {
-  "name": "wellness-platform-backend",
+  "name": "mypeach-backend",
   "version": "1.0.0",
-  "description": "Wellness platform API — Node.js + TypeScript + MongoDB, OTP-only auth",
+  "description": "My Peach API — Node.js + TypeScript + MongoDB, OTP-only auth",
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",

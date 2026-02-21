@@ -19,7 +19,7 @@ function otpEmailHtml(code: string, expiresInMinutes: number): string {
           <table width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
             <tr>
               <td style="background:#1a1a2e;padding:32px;text-align:center;">
-                <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:700;letter-spacing:0.5px;">Wellness Platform</h1>
+                <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:700;letter-spacing:0.5px;">My Peach</h1>
               </td>
             </tr>
             <tr>
@@ -39,7 +39,7 @@ function otpEmailHtml(code: string, expiresInMinutes: number): string {
             </tr>
             <tr>
               <td style="padding:20px 48px;border-top:1px solid #f0f0f0;text-align:center;">
-                <p style="margin:0;color:#aaa;font-size:12px;">&copy; ${new Date().getFullYear()} Wellness Platform. All rights reserved.</p>
+                <p style="margin:0;color:#aaa;font-size:12px;">&copy; ${new Date().getFullYear()} My Peach. All rights reserved.</p>
               </td>
             </tr>
           </table>
@@ -63,7 +63,7 @@ export async function sendOtpEmail(
   const { error } = await resend.emails.send({
     from: env.resend.from,
     to,
-    subject: `${code} is your Wellness Platform sign-in code`,
+    subject: `${code} is your My Peach sign-in code`,
     html: otpEmailHtml(code, expiresInMinutes),
   });
 
