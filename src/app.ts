@@ -15,6 +15,7 @@ import { authGeneralLimiter } from './middleware/rateLimit';
 import { setBlockedFlag, wrapResponse } from './middleware/responseWrapper';
 
 const app = express();
+app.set('trust proxy', 2);                                                                         
 
 const corsOrigin = process.env.CORS_ORIGIN ?? true;
 app.use(
